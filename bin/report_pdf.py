@@ -10,7 +10,6 @@ distribution histogram, and a top-hotspots chart + table.
 Requires: matplotlib, reportlab (installed by bin/install.sh).
 """
 import csv
-import json
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -28,7 +27,8 @@ from reportlab.platypus import (
     Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
-CCN_WARN = 15
+from report_common import CCN_WARN, ast_grep_findings, load_json, triggered_rules
+
 INK = "#1f2933"
 ACCENT = "#2f6f8f"
 WARN = "#c2410c"
@@ -43,13 +43,6 @@ plt.rcParams.update({
     "axes.axisbelow": True,
     "figure.dpi": 150,
 })
-
-
-def load_json(p):
-    try:
-        return json.loads(Path(p).read_text())
-    except Exception:
-        return None
 
 
 # ------------------------------------------------------------- read data ---
@@ -87,21 +80,9 @@ def _short(path, n=3):
 
 
 def read_ast_grep(out):
-    p = out / "ast-grep.json"
-    found = []
-    if not p.exists():
-        return found
-    for line in p.read_text().splitlines():
-        line = line.strip().rstrip(",")
-        if not line or line in "[]":
-            continue
-        try:
-            d = json.loads(line)
-            found.append((d.get("ruleId", "?"), _short(d.get("file", "?")),
-                          d.get("range", {}).get("start", {}).get("line", "?")))
-        except Exception:
-            pass
-    return found
+    return [(d.get("ruleId", "?"), _short(d.get("file", "?")),
+             d.get("range", {}).get("start", {}).get("line", "?"))
+            for d in ast_grep_findings(out)]
 
 
 def read_semgrep(out):
@@ -126,45 +107,6 @@ def read_depcruise(out):
 def read_madge(out):
     d = load_json(out / "madge-circular.json")
     return None if d is None else len(d)
-
-
-DEPCRUISE_DESC = {
-    "no-circular": "Circular dependency between modules.",
-    "no-orphans": "Module not reachable from anywhere (likely dead code).",
-    "no-deprecated-core": "Depends on a deprecated Node core module.",
-    "not-to-unresolvable": "Imports a module that cannot be resolved.",
-    "no-non-package-json": "Imports an npm package not declared in package.json.",
-    "not-to-dev-dep": "Production code depends on a devDependency.",
-    "not-to-test": "Production code imports a test file.",
-    "domain-not-to-infra": "Domain layer depends on infrastructure.",
-}
-
-
-def triggered_rules(out):
-    """Distinct dependency-rule ids that fired, mapped to (tool, description)."""
-    rules = {}
-    p = out / "ast-grep.json"
-    if p.exists():
-        for line in p.read_text().splitlines():
-            line = line.strip().rstrip(",")
-            if not line or line in "[]":
-                continue
-            try:
-                d = json.loads(line)
-                rules.setdefault(d.get("ruleId", "?"), ("ast-grep", d.get("message", "")))
-            except Exception:
-                pass
-    sg = load_json(out / "semgrep.json")
-    if sg:
-        for r in sg.get("results", []):
-            rid = r.get("check_id", "?").split(".")[-1]
-            rules.setdefault(rid, ("semgrep", r.get("extra", {}).get("message", "")))
-    dc = load_json(out / "depcruise.json")
-    if dc:
-        for v in dc.get("summary", {}).get("violations", []):
-            name = v.get("rule", {}).get("name", "?")
-            rules.setdefault(name, ("dependency-cruiser", DEPCRUISE_DESC.get(name, "")))
-    return rules
 
 
 def _count_xml(out, fname, tag, attr):

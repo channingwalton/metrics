@@ -9,21 +9,15 @@ cyclomatic complexity, duplication, code smells, and dependency-rule
 violations. Missing reports are silently skipped.
 """
 import csv
-import json
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-CCN_WARN = 15  # cyclomatic-complexity threshold for "hotspot"
-
-
-def load_json(p: Path):
-    try:
-        return json.loads(p.read_text())
-    except Exception:
-        return None
+from report_common import (
+    CCN_WARN, ast_grep_findings, load_json, triggered_rules,
+)
 
 
 # --------------------------------------------------------------- metrics ---
@@ -248,24 +242,9 @@ def rubycritic_section(out: Path) -> str:
 
 # ----------------------------------------------------- dependency rules ---
 def ast_grep_section(out: Path) -> str:
-    p = out / "ast-grep.json"
-    if not p.exists():
+    if not (out / "ast-grep.json").exists():
         return ""
-    findings = []
-    txt = p.read_text().strip()
-    for line in txt.splitlines():  # --json=stream → one object per line
-        line = line.strip().rstrip(",")
-        if not line or line in "[]":
-            continue
-        try:
-            findings.append(json.loads(line))
-        except Exception:
-            pass
-    if not findings:
-        try:
-            findings = json.loads(txt)
-        except Exception:
-            findings = []
+    findings = ast_grep_findings(out)
     if not findings:
         return "## Dependency rules (ast-grep)\n\n- No violations found.\n"
     by_rule = Counter(f.get("ruleId", "?") for f in findings)
@@ -404,21 +383,12 @@ def write_findings_csv(out: Path) -> int:
                              w.get("inspection", "?").split(".")[-1],
                              w.get("file", "?"), w.get("line", ""), w.get("text", "")))
 
-    # ast-grep (json stream)
-    p = out / "ast-grep.json"
-    if p.exists():
-        for line in p.read_text().splitlines():
-            line = line.strip().rstrip(",")
-            if not line or line in "[]":
-                continue
-            try:
-                d = json.loads(line)
-                rows.append(("dependency", "ast-grep", d.get("severity", ""),
-                             d.get("ruleId", "?"), d.get("file", "?"),
-                             d.get("range", {}).get("start", {}).get("line", ""),
-                             d.get("message", "")))
-            except Exception:
-                pass
+    # ast-grep
+    for d in ast_grep_findings(out):
+        rows.append(("dependency", "ast-grep", d.get("severity", ""),
+                     d.get("ruleId", "?"), d.get("file", "?"),
+                     d.get("range", {}).get("start", {}).get("line", ""),
+                     d.get("message", "")))
 
     # semgrep
     sg = load_json(out / "semgrep.json")
@@ -471,49 +441,6 @@ LEGEND = [
 ]
 
 
-# Descriptions for dependency-cruiser rules (their output carries only the name).
-DEPCRUISE_DESC = {
-    "no-circular": "Circular dependency between modules.",
-    "no-orphans": "Module not reachable from anywhere (likely dead code).",
-    "no-deprecated-core": "Depends on a deprecated Node core module.",
-    "not-to-unresolvable": "Imports a module that cannot be resolved.",
-    "no-non-package-json": "Imports an npm package not declared in package.json.",
-    "not-to-dev-dep": "Production code depends on a devDependency.",
-    "not-to-test": "Production code imports a test file.",
-    "domain-not-to-infra": "Domain layer depends on infrastructure.",
-}
-
-
-def triggered_rules(out: Path):
-    """Distinct dependency-rule ids that actually fired, with a description."""
-    rules = {}  # id -> (tool, description)
-    # ast-grep — findings carry their own message
-    p = out / "ast-grep.json"
-    if p.exists():
-        for line in p.read_text().splitlines():
-            line = line.strip().rstrip(",")
-            if not line or line in "[]":
-                continue
-            try:
-                d = json.loads(line)
-                rules.setdefault(d.get("ruleId", "?"), ("ast-grep", d.get("message", "")))
-            except Exception:
-                pass
-    # semgrep
-    sg = load_json(out / "semgrep.json")
-    if sg:
-        for r in sg.get("results", []):
-            rid = r.get("check_id", "?").split(".")[-1]
-            rules.setdefault(rid, ("semgrep", r.get("extra", {}).get("message", "")))
-    # dependency-cruiser
-    dc = load_json(out / "depcruise.json")
-    if dc:
-        for v in dc.get("summary", {}).get("violations", []):
-            name = v.get("rule", {}).get("name", "?")
-            rules.setdefault(name, ("dependency-cruiser", DEPCRUISE_DESC.get(name, "")))
-    return rules
-
-
 def legend_section(out: Path) -> str:
     lines = [
         "## Legend\n",
@@ -545,6 +472,14 @@ def main():
         "# Static analysis summary\n",
         f"_Target:_ `{target}`  \n_Generated:_ {now}\n",
     ]
+    failures = out / ".failures"
+    if failures.exists():
+        failed = [ln.strip() for ln in failures.read_text().splitlines() if ln.strip()]
+        if failed:
+            parts.append("## ⚠ Sensors that failed\n\n"
+                         "These tools ran but produced no valid output, so their "
+                         "results are **missing** from this report:\n\n"
+                         + "\n".join(f"- `{t}`" for t in failed) + "\n")
     for fn in (
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
         scapegoat_section, scalafix_section, rubycritic_section,

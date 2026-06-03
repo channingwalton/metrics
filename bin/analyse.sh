@@ -46,7 +46,26 @@ ln -sfn "$OUT" "$REPORTS_DIR/latest"
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '\033[1;33m  - skip: %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;31m  ✗ %s\033[0m\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+FAILED=()   # labels of sensors that ran but produced no valid output
+
+# keep FILE KIND LABEL OKMSG
+# Validate a sensor's output: keep it and print OKMSG if valid, otherwise delete
+# the (empty/corrupt) file, warn, and record the failure. KIND = json|xml|text.
+keep() {
+  local file="$1" kind="$2" label="$3" okmsg="$4" valid=0
+  if [ -s "$file" ]; then
+    case "$kind" in
+      json) "$PY" -c 'import json,sys; json.load(open(sys.argv[1]))' "$file" 2>/dev/null && valid=1 ;;
+      xml)  "$PY" -c 'import xml.etree.ElementTree as ET,sys; ET.parse(sys.argv[1])' "$file" 2>/dev/null && valid=1 ;;
+      text) valid=1 ;;
+    esac
+  fi
+  if [ "$valid" = 1 ]; then ok "$okmsg"
+  else rm -f "$file"; warn "$label failed (no valid output)"; FAILED+=("$label"); fi
+}
 
 # Generated/vendored directories excluded from every sensor. Override with
 # EXCLUDE_DIRS="dir1 dir2 ..." in the environment.
@@ -73,36 +92,39 @@ say "Ignored: ${IGNORE_DIRS[*]}"
 
 # ---------------------------------------------------------------- polyglot ---
 if have scc; then
-  scc --format json --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' --output "$OUT/scc.json" "$TARGET" 2>/dev/null && ok "scc.json (size/complexity/COCOMO)"
-  scc --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' "$TARGET" > "$OUT/scc.txt" 2>/dev/null
+  scc --format json --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' --output "$OUT/scc.json" "$TARGET" 2>/dev/null || true
+  scc --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' "$TARGET" > "$OUT/scc.txt" 2>/dev/null || true
+  keep "$OUT/scc.json" json scc "scc.json (size/complexity/COCOMO)"
 else skip "scc (size/complexity)"; fi
 
 if have lizard; then
   # CSV: nloc,ccn,token,param,length,location,file,function,...
-  lizard "$TARGET" "${LIZARD_X[@]}" --csv > "$OUT/lizard.csv" 2>/dev/null && ok "lizard.csv (per-function CCN)"
-  lizard "$TARGET" "${LIZARD_X[@]}" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null
+  lizard "$TARGET" "${LIZARD_X[@]}" --csv > "$OUT/lizard.csv" 2>/dev/null || true
+  lizard "$TARGET" "${LIZARD_X[@]}" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null || true
+  keep "$OUT/lizard.csv" text lizard "lizard.csv (per-function CCN)"
 else skip "lizard (cyclomatic complexity)"; fi
 
 # dependency rules — custom YAML rules under config/ast-grep/rules
 if have ast-grep; then
   if [ -f "$CONF/ast-grep/sgconfig.yml" ]; then
-    # ast-grep exits non-zero when it FINDS violations, so don't gate on rc.
-    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml "${AG_GLOBS[@]}" --json=stream "$TARGET" > "$OUT/ast-grep.json" 2>/dev/null) || true
-    [ -f "$OUT/ast-grep.json" ] && ok "ast-grep.json (dependency rules)"
+    # --json (array) always writes valid JSON ([] when clean), so we can tell a
+    # genuine "no violations" apart from a tool failure.
+    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml "${AG_GLOBS[@]}" --json "$TARGET" > "$OUT/ast-grep.json" 2>/dev/null) || true
+    keep "$OUT/ast-grep.json" json ast-grep "ast-grep.json (dependency rules)"
   else skip "ast-grep (no sgconfig.yml)"; fi
 else skip "ast-grep (dependency rules)"; fi
 
 if have semgrep && [ -f "$CONF/semgrep/import-rules.yml" ]; then
   semgrep --config "$CONF/semgrep/import-rules.yml" "${SG_EXCLUDE[@]}" --json --quiet "$TARGET" > "$OUT/semgrep.json" 2>/dev/null || true
-  [ -s "$OUT/semgrep.json" ] && ok "semgrep.json (dependency rules)"
+  keep "$OUT/semgrep.json" json semgrep "semgrep.json (dependency rules)"
 else skip "semgrep (dependency rules)"; fi
 
 # ------------------------------------------------------------------ Kotlin ---
 if present -name '*.kt' -o -name '*.kts'; then
   if have detekt; then
     DKCFG=""; [ -f "$CONF/detekt/detekt.yml" ] && DKCFG="--config $CONF/detekt/detekt.yml --build-upon-default-config"
-    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1
-    [ -f "$OUT/detekt.xml" ] && ok "detekt.xml (Kotlin complexity/smells)"
+    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1 || true
+    keep "$OUT/detekt.xml" xml detekt "detekt.xml (Kotlin complexity/smells)"
   else skip "detekt (Kotlin present, tool missing)"; fi
 fi
 
@@ -110,10 +132,16 @@ fi
 if present -name '*.java'; then
   if have pmd; then
     PMDRULES="rulesets/java/quickstart.xml"; [ -f "$CONF/pmd/ruleset.xml" ] && PMDRULES="$CONF/pmd/ruleset.xml"
-    pmd check -d "$TARGET" -R "$PMDRULES" -f xml -r "$OUT/pmd.xml" >/dev/null 2>&1
-    [ -s "$OUT/pmd.xml" ] && ok "pmd.xml (Java rules)"
-    pmd cpd --dir "$TARGET" --minimum-tokens 100 --language java --format xml > "$OUT/cpd.xml" 2>/dev/null
-    [ -s "$OUT/cpd.xml" ] && ok "cpd.xml (Java duplication)"
+    # PMD/CPD have no glob-exclude, so pass an explicit file list honouring IGNORE_DIRS.
+    JAVA_LIST="$OUT/.java-files"
+    find "$TARGET" -type f -name '*.java' "${FIND_PRUNE[@]}" > "$JAVA_LIST" 2>/dev/null || true
+    if [ -s "$JAVA_LIST" ]; then
+      pmd check --file-list "$JAVA_LIST" -R "$PMDRULES" -f xml -r "$OUT/pmd.xml" >/dev/null 2>&1 || true
+      keep "$OUT/pmd.xml" xml pmd "pmd.xml (Java rules)"
+      pmd cpd --file-list "$JAVA_LIST" --minimum-tokens 100 --language java --format xml > "$OUT/cpd.xml" 2>/dev/null || true
+      keep "$OUT/cpd.xml" xml cpd "cpd.xml (Java duplication)"
+    else skip "pmd/cpd (no Java files after exclusions)"; fi
+    rm -f "$JAVA_LIST"
   else skip "pmd (Java present, tool missing)"; fi
 fi
 
@@ -121,12 +149,12 @@ fi
 if present -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx'; then
   if have depcruise; then
     CFG=""; [ -f "$CONF/dependency-cruiser/.dependency-cruiser.cjs" ] && CFG="--config $CONF/dependency-cruiser/.dependency-cruiser.cjs"
-    depcruise $CFG --output-type json "$TARGET" > "$OUT/depcruise.json" 2>/dev/null
-    [ -s "$OUT/depcruise.json" ] && ok "depcruise.json (TS/JS dependency rules + cycles)"
+    depcruise $CFG --output-type json "$TARGET" > "$OUT/depcruise.json" 2>/dev/null || true
+    keep "$OUT/depcruise.json" json dependency-cruiser "depcruise.json (TS/JS dependency rules + cycles)"
   else skip "dependency-cruiser (TS/JS present, tool missing)"; fi
   if have madge; then
     madge --circular --json "$TARGET" > "$OUT/madge-circular.json" 2>/dev/null || true
-    [ -s "$OUT/madge-circular.json" ] && ok "madge-circular.json (cycles)"
+    keep "$OUT/madge-circular.json" json madge "madge-circular.json (cycles)"
   else skip "madge"; fi
 fi
 
@@ -160,14 +188,29 @@ if present -name '*.scala'; then
   fi
 fi
 
+# record failed sensors so the summary can report them
+if [ ${#FAILED[@]} -gt 0 ]; then printf '%s\n' "${FAILED[@]}" > "$OUT/.failures"; fi
+
 # -------------------------------------------------------------- aggregate ---
 say "Aggregating summary"
-"$PY" "$HERE/bin/aggregate.py" "$OUT" "$TARGET" && ok "summary.md"
+AGG_OK=0
+if "$PY" "$HERE/bin/aggregate.py" "$OUT" "$TARGET"; then ok "summary.md"; AGG_OK=1
+else warn "aggregation failed — summary.md not written"; fi
 
-# graphical PDF (skipped if matplotlib/reportlab missing)
+# graphical PDF (independent of the markdown; skipped if libs missing)
 if "$PY" -c 'import matplotlib, reportlab' 2>/dev/null; then
-  "$PY" "$HERE/bin/report_pdf.py" "$OUT" "$TARGET" >/dev/null 2>&1 && ok "report.pdf"
+  if "$PY" "$HERE/bin/report_pdf.py" "$OUT" "$TARGET" >/dev/null 2>&1; then ok "report.pdf"
+  else warn "report.pdf generation failed"; fi
 else
   skip "report.pdf ($PY -m pip install matplotlib reportlab)"
 fi
-say "Open: $OUT/summary.md  |  $OUT/report.pdf"
+
+# Point only at files that actually exist.
+say "Reports in: $OUT"
+[ -f "$OUT/summary.md" ]   && say "  summary:  $OUT/summary.md"
+[ -f "$OUT/report.pdf" ]   && say "  pdf:      $OUT/report.pdf"
+[ -f "$OUT/findings.csv" ] && say "  findings: $OUT/findings.csv"
+[ ${#FAILED[@]} -gt 0 ]    && warn "sensors that failed: ${FAILED[*]}"
+
+# Fail the run if the summary could not be produced.
+[ "$AGG_OK" = 1 ] || exit 1

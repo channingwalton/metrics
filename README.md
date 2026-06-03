@@ -59,7 +59,10 @@ Each run writes to `reports/<timestamp>/` (the `reports` folder defaults to the
 current directory; override with `--reports DIR`) and updates `reports/latest/`.
 `summary.md` and `report.pdf` are summaries; `findings.csv` holds the full
 navigable detail; the rest are the raw per-tool reports. Files only appear when
-the matching tool ran.
+the matching tool ran. A sensor that runs but produces no valid output is
+dropped (not listed) and called out under a **Sensors that failed** heading in
+`summary.md`; if the summary itself can't be written, the run prints an error
+and exits non-zero.
 
 | File | What it is |
 |---|---|
