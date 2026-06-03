@@ -8,6 +8,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="${PYTHON:-python3}"   # keep in step with install.sh
 TARGET="$(cd "${1:-$PWD}" && pwd)"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$HERE/reports/$STAMP"
@@ -96,12 +97,12 @@ fi
 
 # -------------------------------------------------------------- aggregate ---
 say "Aggregating summary"
-python3 "$HERE/bin/aggregate.py" "$OUT" "$TARGET" && ok "summary.md"
+"$PY" "$HERE/bin/aggregate.py" "$OUT" "$TARGET" && ok "summary.md"
 
 # graphical PDF (skipped if matplotlib/reportlab missing)
-if python3 -c 'import matplotlib, reportlab' 2>/dev/null; then
-  python3 "$HERE/bin/report_pdf.py" "$OUT" "$TARGET" >/dev/null 2>&1 && ok "report.pdf"
+if "$PY" -c 'import matplotlib, reportlab' 2>/dev/null; then
+  "$PY" "$HERE/bin/report_pdf.py" "$OUT" "$TARGET" >/dev/null 2>&1 && ok "report.pdf"
 else
-  skip "report.pdf (pip install matplotlib reportlab)"
+  skip "report.pdf ($PY -m pip install matplotlib reportlab)"
 fi
 say "Open: $OUT/summary.md  |  $OUT/report.pdf"

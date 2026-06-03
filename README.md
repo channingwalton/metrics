@@ -63,3 +63,30 @@ config/     example rule configs per tool (ast-grep, dependency-cruiser,
 docs/       TOOLS.md — recommendation & comparison
 reports/    generated output (git-ignored)
 ```
+
+## Appendix: glossary
+
+Acronyms and metrics used in this toolkit and its reports.
+
+| Term | Expansion | Meaning |
+|---|---|---|
+| **CCN** | Cyclomatic Complexity Number | McCabe's count of independent paths through a function (≈ branch/loop decision points + 1). A lower bound on the number of tests needed to cover it. Higher = harder to understand and test. |
+| **NLOC** | Non-comment Lines Of Code | Source lines excluding blanks and comments; lizard's per-function size measure. |
+| **LOC** | Lines Of Code | Source lines (scc's "Code" column excludes blanks and comments). |
+| **McCabe** | — | The author of cyclomatic complexity; "McCabe complexity" = CCN. |
+| **COCOMO** | Constructive Cost Model | Boehm's model estimating effort/cost/schedule from LOC; scc reports it as a rough order-of-magnitude figure. |
+| **DRYness** | "Don't Repeat Yourself"-ness | scc's measure of how unique the lines are; low DRYness signals duplication. |
+| **CPD** | Copy/Paste Detector | PMD's tool for finding duplicated code blocks over a token threshold. |
+| **ABC** | Assignments, Branches, Conditions | The complexity metric Ruby's flog reports (related to, but not identical to, CCN). |
+| **AST** | Abstract Syntax Tree | The parsed structure of code; ast-grep/semgrep match rules against it. |
+| **p95 / p90** | 95th / 90th percentile | The value below which 95% (or 90%) of functions fall — used to describe the complexity *distribution* rather than a single total. |
+| **median** | 50th percentile | The middle value; half of functions are below it. |
+| **density (CCN/LOC)** | — | Total CCN divided by lines of code; complexity normalised for size, so big and small codebases are comparable. |
+| **Ca** | Afferent coupling | Number of things that depend *on* a module (incoming). |
+| **Ce** | Efferent coupling | Number of things a module depends *on* (outgoing). |
+| **Instability (I)** | — | `Ce / (Ca + Ce)`, 0–1. High = easy to change but depended on by little; low = stable, hard to change safely. |
+| **Abstractness (A)** | — | Ratio of abstract types to all types in a package, 0–1. |
+| **churn** | — | How often a file changes in version control; high churn + high complexity = a refactoring priority. |
+| **SARIF** | Static Analysis Results Interchange Format | A standard JSON format for analysis findings (e.g. detekt can emit it). |
+| **CI** | Continuous Integration | Automated build/test pipeline where these sensors typically run. |
+| **dependency rule** | — | A constraint on which modules may depend on which (forbidden edges, layering, no cycles) — Böckeler's second sensor type. |
