@@ -2,3 +2,4 @@ reports/*
 !reports/.gitkeep
 .DS_Store
 node_modules/
+/bin/__pycache__

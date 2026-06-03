@@ -173,6 +173,46 @@ def cpd_section(out: Path) -> str:
     )
 
 
+def scapegoat_section(out: Path) -> str:
+    p = out / "scapegoat.xml"
+    if not p.exists():
+        return ""
+    try:
+        root = ET.parse(p).getroot()
+    except Exception:
+        return ""
+    by_level = Counter()
+    by_insp = Counter()
+    total = 0
+    for el in root.iter():
+        if el.tag.endswith("warning"):
+            by_level[el.get("level", "?")] += 1
+            by_insp[el.get("inspection", "?").split(".")[-1]] += 1
+            total += 1
+    if total == 0:
+        return "## Scala (scapegoat)\n\n- No warnings.\n"
+    levels = ", ".join(f"{n} {lv.lower()}" for lv, n in by_level.most_common())
+    lines = [
+        "## Scala inspections (scapegoat)\n",
+        f"- **{total} warning(s)** — {levels}\n",
+        "\n| Inspection | Count |", "|---|--:|",
+    ]
+    for insp, n in by_insp.most_common(15):
+        lines.append(f"| {insp} | {n} |")
+    return "\n".join(lines) + "\n"
+
+
+def scalafix_section(out: Path) -> str:
+    p = out / "scalafix.txt"
+    if not p.exists():
+        return ""
+    txt = p.read_text()
+    errs = txt.lower().count("error")
+    if errs == 0:
+        return "## Scala lint (scalafix)\n\n- No rule violations.\n"
+    return f"## Scala lint (scalafix)\n\n- **{errs}** line(s) mentioning errors; see `scalafix.txt`.\n"
+
+
 def rubycritic_section(out: Path) -> str:
     d = out / "rubycritic"
     if not d.exists():
@@ -317,8 +357,8 @@ def main():
     ]
     for fn in (
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
-        rubycritic_section, ast_grep_section, semgrep_section,
-        depcruise_section, madge_section,
+        scapegoat_section, scalafix_section, rubycritic_section,
+        ast_grep_section, semgrep_section, depcruise_section, madge_section,
     ):
         try:
             s = fn(out)

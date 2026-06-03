@@ -38,6 +38,11 @@ open reports/latest/summary.md
 `config/`); `DIR` must mirror its layout (`ast-grep/`, `semgrep/`, `detekt/`,
 etc.). The target repo defaults to the current directory.
 
+`--sbt` additionally runs scalafix and scapegoat on sbt projects (it compiles,
+so it's slow and off by default). They need the matching sbt plugins added to
+the project; scapegoat is Scala 2.x only, so on a Scala 3 repo lean on lizard +
+ast-grep + the compiler's own `-Wall`/`-Wunused` flags instead.
+
 `analyse.sh` detects which languages are present and which tools are installed,
 runs only what applies, and writes one report per tool plus an aggregated
 `summary.md` into `reports/<timestamp>/` (symlinked as `reports/latest/`).

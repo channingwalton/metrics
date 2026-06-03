@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run all available static-analysis sensors over a target repo.
-# Usage: bin/analyse.sh [--config DIR] [TARGET_DIR]
+# Usage: bin/analyse.sh [--config DIR] [--sbt] [TARGET_DIR]
 #   --config DIR   directory of tool rule configs (default: <project>/config)
+#   --sbt          for sbt projects, also run scalafix/scapegoat (compiles; slow)
 #   TARGET_DIR     repo to analyse (default: current directory)
 #
 # Detects which languages are present and which tools are installed, runs only
@@ -15,11 +16,13 @@ PY="${PYTHON:-python3}"   # keep in step with install.sh
 # --- args -------------------------------------------------------------------
 CONF="$HERE/config"
 TARGET_ARG=""
+RUN_SBT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONF="$2"; shift 2 ;;
     --config=*) CONF="${1#*=}"; shift ;;
-    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --sbt) RUN_SBT=1; shift ;;
+    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) TARGET_ARG="$1"; shift ;;
   esac
@@ -111,9 +114,26 @@ if present -name '*.rb'; then
 fi
 
 # ------------------------------------------------------------------ Scala ---
-# Complexity covered by lizard above. scalafix/scapegoat need sbt — see docs.
+# Complexity covered by lizard above. scalafix/scapegoat need sbt to compile, so
+# they run only with --sbt and only when the target is an sbt project.
 if present -name '*.scala'; then
-  skip "scalafix/scapegoat (Scala: build-integrated; lizard covers CCN. See docs/TOOLS.md)"
+  if [ "$RUN_SBT" = "1" ] && [ -f "$TARGET/build.sbt" ] && have sbt; then
+    say "Scala: running sbt (compiles — this can be slow)"
+    # scapegoat: Scala 2.x only; harmless no-op / failure on Scala 3 (captured).
+    (cd "$TARGET" && sbt -batch -error scapegoat >/dev/null 2>&1) || true
+    SG="$(find "$TARGET" -path '*scapegoat-report/scapegoat.xml' -print -quit 2>/dev/null)"
+    if [ -n "$SG" ]; then cp "$SG" "$OUT/scapegoat.xml"; ok "scapegoat.xml (Scala inspections)"
+    else skip "scapegoat (no report — Scala 3 or plugin not added; see docs)"; fi
+    # scalafix: needs the sbt-scalafix plugin + a .scalafix.conf in the project.
+    if (cd "$TARGET" && sbt -batch -error "scalafixAll --check" > "$OUT/scalafix.txt" 2>&1); then
+      ok "scalafix.txt (no rule violations)"
+    elif [ -s "$OUT/scalafix.txt" ]; then ok "scalafix.txt (output captured)"
+    else skip "scalafix (plugin/.scalafix.conf not set up; see docs)"; fi
+  elif [ "$RUN_SBT" = "1" ]; then
+    skip "scalafix/scapegoat (--sbt set but no build.sbt or sbt not installed)"
+  else
+    skip "scalafix/scapegoat (pass --sbt for sbt projects; lizard covers CCN)"
+  fi
 fi
 
 # -------------------------------------------------------------- aggregate ---
