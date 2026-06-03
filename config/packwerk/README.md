@@ -13,27 +13,18 @@ gem install packwerk          # (already installed by bin/install.sh)
 bin/packwerk init             # generates packwerk.yml + an root package.yml
 ```
 
-## Root `packwerk.yml`
+## Ready-made examples
 
-```yaml
-include:
-  - "**/*.{rb,rake,erb}"
-exclude:
-  - "{bin,node_modules,script,tmp,vendor}/**/*"
-```
+This directory ships concrete configs you can copy in:
 
-## A package with dependency rules — `app/domain/package.yml`
+- `packwerk.yml` → app root
+- `example/domain/package.yml` → `app/domain/package.yml` (depends on nothing)
+- `example/infrastructure/package.yml` → `app/infrastructure/package.yml`
+  (depends on `app/domain`)
 
-```yaml
-enforce_dependencies: true   # this package may only depend on its declared deps
-enforce_privacy: true        # other packages may only use this package's public API
-dependencies:
-  - "."                      # e.g. domain depends only on the root, NOT on infra
-```
-
-`app/infrastructure/package.yml` would list `app/domain` as a dependency,
-encoding the same "infra may depend on domain, not vice-versa" rule as the
-ArchUnit/Konsist examples.
+Together they encode the same "infra may depend on domain, not vice-versa" rule
+as the ArchUnit and Konsist examples. `enforce_privacy: true` additionally
+restricts other packages to each package's public API (`app/<pkg>/public/**`).
 
 ## Check
 

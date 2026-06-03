@@ -1,0 +1,55 @@
+# Balanced, high-confidence quality rules. These are deliberately conservative
+# so they flag real mistakes without noise. Tune severity to taste.
+
+# Focused tests left in the suite silently disable every other test in the file.
+id: ts-no-focused-tests
+language: TypeScript
+severity: error
+message: "Focused test left in suite (.only / fdescribe / fit) — it skips all others."
+rule:
+  any:
+    - pattern: describe.only($$$)
+    - pattern: it.only($$$)
+    - pattern: test.only($$$)
+    - pattern: fdescribe($$$)
+    - pattern: fit($$$)
+
+---
+id: tsx-no-focused-tests
+language: Tsx
+severity: error
+message: "Focused test left in suite (.only / fdescribe / fit)."
+rule:
+  any:
+    - pattern: describe.only($$$)
+    - pattern: it.only($$$)
+    - pattern: test.only($$$)
+
+---
+# Debug logging that escaped to committed code. Warning, not error.
+id: ts-no-console-log
+language: TypeScript
+severity: warning
+message: "console.log left in source — use a logger or remove."
+files:
+  - "**/src/**"
+rule:
+  pattern: console.log($$$)
+
+---
+id: java-no-printstacktrace
+language: Java
+severity: warning
+message: "printStackTrace() swallows errors into stderr — log or rethrow instead."
+rule:
+  pattern: $E.printStackTrace()
+
+---
+id: scala-no-println
+language: Scala
+severity: warning
+message: "println in production code — use a logger."
+files:
+  - "**/src/main/**"
+rule:
+  pattern: println($$$)

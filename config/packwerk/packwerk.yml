@@ -1,0 +1,10 @@
+# Root packwerk config — place at the app root. Enforces package boundaries
+# between Ruby "packages" (directories containing a package.yml).
+# Docs: https://github.com/Shopify/packwerk
+include:
+  - "**/*.{rb,rake,erb}"
+exclude:
+  - "{bin,node_modules,script,tmp,vendor,test,spec}/**/*"
+
+# Fail the run on any boundary or privacy violation.
+parallel: true

@@ -1,0 +1,7 @@
+# Example: the infrastructure package. It MAY depend on domain (one direction),
+# encoding the same "infra -> domain, never domain -> infra" rule as the
+# ArchUnit and Konsist examples. Depending the other way is a violation.
+enforce_dependencies: true
+enforce_privacy: true
+dependencies:
+  - app/domain

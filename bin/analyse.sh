@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run all available static-analysis sensors over a target repo.
-# Usage: bin/analyse.sh [TARGET_DIR]   (defaults to current directory)
+# Usage: bin/analyse.sh [--config DIR] [TARGET_DIR]
+#   --config DIR   directory of tool rule configs (default: <project>/config)
+#   TARGET_DIR     repo to analyse (default: current directory)
 #
 # Detects which languages are present and which tools are installed, runs only
 # what applies, writes one report per tool into reports/<timestamp>/, and
@@ -9,10 +11,25 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${PYTHON:-python3}"   # keep in step with install.sh
-TARGET="$(cd "${1:-$PWD}" && pwd)"
+
+# --- args -------------------------------------------------------------------
+CONF="$HERE/config"
+TARGET_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --config) CONF="$2"; shift 2 ;;
+    --config=*) CONF="${1#*=}"; shift ;;
+    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) TARGET_ARG="$1"; shift ;;
+  esac
+done
+TARGET="$(cd "${TARGET_ARG:-$PWD}" 2>/dev/null && pwd)" || { echo "no such target dir: ${TARGET_ARG:-$PWD}" >&2; exit 2; }
+CONF_IN="$CONF"
+CONF="$(cd "$CONF_IN" 2>/dev/null && pwd)" || { echo "no such config dir: $CONF_IN" >&2; exit 2; }
+
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$HERE/reports/$STAMP"
-CONF="$HERE/config"
 mkdir -p "$OUT"
 ln -sfn "$OUT" "$HERE/reports/latest"
 
@@ -24,6 +41,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 present() { find "$TARGET" -type f \( "$@" \) -not -path '*/node_modules/*' -not -path '*/.git/*' -print -quit 2>/dev/null | grep -q .; }
 
 say "Target:  $TARGET"
+say "Config:  $CONF"
 say "Reports: $OUT"
 
 # ---------------------------------------------------------------- polyglot ---
@@ -55,14 +73,17 @@ else skip "semgrep (dependency rules)"; fi
 # ------------------------------------------------------------------ Kotlin ---
 if present -name '*.kt' -o -name '*.kts'; then
   if have detekt; then
-    detekt --input "$TARGET" --report xml:"$OUT/detekt.xml" >/dev/null 2>&1 && ok "detekt.xml (Kotlin complexity/smells)"
+    DKCFG=""; [ -f "$CONF/detekt/detekt.yml" ] && DKCFG="--config $CONF/detekt/detekt.yml --build-upon-default-config"
+    detekt --input "$TARGET" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1
+    [ -f "$OUT/detekt.xml" ] && ok "detekt.xml (Kotlin complexity/smells)"
   else skip "detekt (Kotlin present, tool missing)"; fi
 fi
 
 # -------------------------------------------------------------------- Java ---
 if present -name '*.java'; then
   if have pmd; then
-    pmd check -d "$TARGET" -R rulesets/java/quickstart.xml -f xml -r "$OUT/pmd.xml" >/dev/null 2>&1
+    PMDRULES="rulesets/java/quickstart.xml"; [ -f "$CONF/pmd/ruleset.xml" ] && PMDRULES="$CONF/pmd/ruleset.xml"
+    pmd check -d "$TARGET" -R "$PMDRULES" -f xml -r "$OUT/pmd.xml" >/dev/null 2>&1
     [ -s "$OUT/pmd.xml" ] && ok "pmd.xml (Java rules)"
     pmd cpd --dir "$TARGET" --minimum-tokens 100 --language java --format xml > "$OUT/cpd.xml" 2>/dev/null
     [ -s "$OUT/cpd.xml" ] && ok "cpd.xml (Java duplication)"

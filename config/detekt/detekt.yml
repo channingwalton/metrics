@@ -1,0 +1,59 @@
+# Balanced detekt config. Used with --build-upon-default-config, so this only
+# *overrides* detekt's defaults — everything not mentioned keeps its default.
+# The focus here is the complexity/size sensors; style noise is dialled down.
+# Docs: https://detekt.dev/docs/introduction/configurations
+
+build:
+  maxIssues: 0            # report-only; analyse.sh never fails the run
+  excludeCorrectable: false
+
+complexity:
+  active: true
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 15         # matches the toolkit's CCN hotspot threshold
+    ignoreSingleWhenExpression: true
+  CognitiveComplexMethod:
+    active: true
+    threshold: 15
+  LongMethod:
+    active: true
+    threshold: 60
+  LongParameterList:
+    active: true
+    functionThreshold: 6
+    constructorThreshold: 7
+  NestedBlockDepth:
+    active: true
+    threshold: 4
+  TooManyFunctions:
+    active: true
+    thresholdInClasses: 20
+    thresholdInFiles: 20
+
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: true
+  SwallowedException:
+    active: true
+
+empty-blocks:
+  active: true
+
+potential-bugs:
+  active: true
+
+# Style rules are mostly handled by ktlint; keep detekt focused on substance.
+style:
+  active: true
+  MaxLineLength:
+    active: false
+  WildcardImport:
+    active: true
+  ForbiddenComment:
+    active: true
+    comments: ["TODO:", "FIXME:", "STOPSHIP:"]
+
+formatting:
+  active: false           # leave formatting to ktlint

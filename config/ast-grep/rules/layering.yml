@@ -1,0 +1,89 @@
+# Balanced architectural dependency rules: the domain layer must not depend on
+# the infrastructure layer. One rule per language, because ast-grep matches each
+# language's import *syntax*. Adapt `files` (which paths count as "domain") and
+# the PATH/PKG regex to your own layer names.
+#
+# Multiple rules live in one file, separated by `---`.
+
+id: ts-domain-import-infra
+language: TypeScript
+severity: error
+message: "Domain layer must not import infrastructure (TypeScript)."
+files:
+  - "**/domain/**"
+rule:
+  any:
+    - pattern: import $$$ from '$PATH'
+    - pattern: import $$$ from "$PATH"
+constraints:
+  PATH:
+    regex: "infra|infrastructure"
+
+---
+id: tsx-domain-import-infra
+language: Tsx
+severity: error
+message: "Domain layer must not import infrastructure (TSX)."
+files:
+  - "**/domain/**"
+rule:
+  any:
+    - pattern: import $$$ from '$PATH'
+    - pattern: import $$$ from "$PATH"
+constraints:
+  PATH:
+    regex: "infra|infrastructure"
+
+---
+id: scala-domain-import-infra
+language: Scala
+severity: error
+message: "Domain layer must not import infrastructure (Scala)."
+files:
+  - "**/domain/**"
+rule:
+  pattern: import $PKG
+constraints:
+  PKG:
+    regex: "infra|infrastructure"
+
+---
+id: java-domain-import-infra
+language: Java
+severity: error
+message: "Domain layer must not import infrastructure (Java)."
+files:
+  - "**/domain/**"
+rule:
+  pattern: import $PKG;
+constraints:
+  PKG:
+    regex: "infra|infrastructure"
+
+---
+id: kotlin-domain-import-infra
+language: Kotlin
+severity: error
+message: "Domain layer must not import infrastructure (Kotlin)."
+files:
+  - "**/domain/**"
+rule:
+  pattern: import $PKG
+constraints:
+  PKG:
+    regex: "infra|infrastructure"
+
+---
+id: python-domain-import-infra
+language: Python
+severity: error
+message: "Domain layer must not import infrastructure (Python)."
+files:
+  - "**/domain/**"
+rule:
+  any:
+    - pattern: import $MOD
+    - pattern: from $MOD import $$$
+constraints:
+  MOD:
+    regex: "infra|infrastructure"

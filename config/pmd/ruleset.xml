@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!--
+  Balanced PMD ruleset for Java. Starts from the curated "quickstart" set and
+  trims a couple of the noisiest rules. Used by bin/analyse.sh via -R.
+  Docs: https://pmd.github.io/pmd/pmd_userdocs_making_rulesets.html
+-->
+<ruleset name="metrics-balanced"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+
+  <description>Balanced defaults: quickstart minus the noisiest style rules,
+    with explicit complexity thresholds aligned to the toolkit.</description>
+
+  <!-- The curated baseline maintained by the PMD team. -->
+  <rule ref="rulesets/java/quickstart.xml">
+    <!-- These tend to fire constantly on existing code; exclude for a calmer baseline. -->
+    <exclude name="GuardLogStatement"/>
+    <exclude name="LiteralsFirstInComparisons"/>
+  </rule>
+
+  <!-- Pin complexity thresholds to match the rest of the toolkit (CCN 15). -->
+  <rule ref="category/java/design.xml/CyclomaticComplexity">
+    <properties>
+      <property name="methodReportLevel" value="15"/>
+      <property name="classReportLevel" value="80"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/design.xml/CognitiveComplexity">
+    <properties>
+      <property name="reportLevel" value="15"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/design.xml/NPathComplexity"/>
+  <rule ref="category/java/design.xml/ExcessiveParameterList">
+    <properties>
+      <property name="minimum" value="6"/>
+    </properties>
+  </rule>
+</ruleset>

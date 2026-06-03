@@ -1,0 +1,7 @@
+# Example: the domain package. It declares NO dependencies, so packwerk will
+# flag any code here that reaches into another package (e.g. infrastructure).
+# enforce_privacy means other packages may only touch domain's public API
+# (app/domain/public/**), not its internals.
+enforce_dependencies: true
+enforce_privacy: true
+dependencies: []

@@ -1,13 +1,16 @@
-# Semgrep dependency rules — alternative/complement to ast-grep.
+# Semgrep rules — dependency rules + a few balanced quality checks.
+# Complements ast-grep; semgrep adds a large public registry you can layer on:
+#   semgrep --config p/default --config config/semgrep/import-rules.yml <dir>
 # Run via: bin/analyse.sh  (or: semgrep --config import-rules.yml <dir>)
+# Docs: https://semgrep.dev/docs/writing-rules/rule-syntax
 rules:
+  # --- architectural dependency rules (adapt paths/modules to your layout) ---
   - id: domain-must-not-import-infra-py
     languages: [python]
     severity: ERROR
     message: "Domain layer must not import infrastructure."
     paths:
-      include:
-        - "**/domain/**"
+      include: ["**/domain/**"]
     patterns:
       - pattern-either:
           - pattern: import $X.infra
@@ -19,19 +22,54 @@ rules:
     severity: ERROR
     message: "Domain layer must not import infrastructure."
     paths:
-      include:
-        - "**/domain/**"
+      include: ["**/domain/**"]
     patterns:
       - pattern-regex: "import\\s+.*from\\s+['\"].*(infra|infrastructure).*['\"]"
 
+  - id: domain-must-not-import-infra-java
+    languages: [java]
+    severity: ERROR
+    message: "Domain layer must not import infrastructure."
+    paths:
+      include: ["**/domain/**"]
+    patterns:
+      - pattern-regex: "import\\s+.*(infra|infrastructure).*;"
+
+  # --- balanced quality checks ----------------------------------------------
   - id: no-direct-sql-in-controllers
     languages: [ruby]
     severity: WARNING
     message: "Controllers should not issue raw SQL — go through a repository."
     paths:
-      include:
-        - "**/controllers/**"
+      include: ["**/controllers/**"]
     patterns:
       - pattern-either:
           - pattern: $M.execute($SQL)
           - pattern: ActiveRecord::Base.connection.execute($SQL)
+
+  - id: no-focused-tests-js
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Focused test (.only) disables every other test in the file."
+    patterns:
+      - pattern-either:
+          - pattern: describe.only(...)
+          - pattern: it.only(...)
+          - pattern: test.only(...)
+
+  - id: no-empty-catch-braces
+    languages: [java, javascript, typescript]
+    severity: WARNING
+    message: "Empty catch block swallows errors silently."
+    pattern: |
+      try { ... } catch ($E) { }
+
+  - id: no-empty-except-python
+    languages: [python]
+    severity: WARNING
+    message: "Empty except block swallows errors silently."
+    pattern: |
+      try:
+          ...
+      except $E:
+          pass

@@ -27,9 +27,16 @@ bin/install.sh
 # 2. run all available sensors over a target repo
 bin/analyse.sh /path/to/your/repo
 
+# ...or point at your own rule configs
+bin/analyse.sh --config /path/to/configs /path/to/your/repo
+
 # 3. read the summary
 open reports/latest/summary.md
 ```
+
+`--config DIR` overrides the rule-config directory (default: this project's
+`config/`); `DIR` must mirror its layout (`ast-grep/`, `semgrep/`, `detekt/`,
+etc.). The target repo defaults to the current directory.
 
 `analyse.sh` detects which languages are present and which tools are installed,
 runs only what applies, and writes one report per tool plus an aggregated
@@ -58,11 +65,44 @@ Konsist for Kotlin, packwerk for Ruby) ship as **example configs** under
 
 ```
 bin/        install.sh, analyse.sh, aggregate.py
-config/     example rule configs per tool (ast-grep, dependency-cruiser,
-            semgrep, archunit, konsist, packwerk)
+config/     rule configs per tool (ast-grep, dependency-cruiser, semgrep,
+            detekt, pmd, archunit, konsist, packwerk)
 docs/       TOOLS.md — recommendation & comparison
 reports/    generated output (git-ignored)
 ```
+
+## Configuration
+
+`config/` ships **balanced, ready-to-use defaults** — sensible rules that flag
+real problems without burying a fresh repo in warnings. `analyse.sh` picks them
+up automatically; tune or delete rules as suits your codebase.
+
+Two kinds of config live here:
+
+**Run automatically by `analyse.sh`:**
+
+| Config | Tool | What it sets |
+|---|---|---|
+| `ast-grep/rules/layering.yml` | ast-grep | "domain must not import infra" as a forbidden-edge rule for TS/Scala/Java/Kotlin/Python |
+| `ast-grep/rules/quality.yml` | ast-grep | high-confidence checks: no focused tests, no stray `console.log`/`println`, no `printStackTrace` |
+| `semgrep/import-rules.yml` | semgrep | layering rules + empty-catch / focused-test / raw-SQL-in-controller checks |
+| `dependency-cruiser/.dependency-cruiser.cjs` | dependency-cruiser | no cycles, no orphans, no dev-dep/test leakage into prod, domain↛infra |
+| `detekt/detekt.yml` | detekt | Kotlin complexity thresholds (CCN/cognitive 15, long method/params), applied with `--build-upon-default-config` |
+| `pmd/ruleset.xml` | PMD | Java quickstart minus the noisiest rules, complexity pinned to CCN 15 |
+
+**Build-integrated examples** (copy into your project's test suite/app — they
+need compilation or a package layout, so `analyse.sh` does not run them):
+
+| Config | Tool | Purpose |
+|---|---|---|
+| `archunit/LayeredArchitectureTest.java` | ArchUnit | JVM layering, no-cycles, no field injection, naming |
+| `konsist/ArchitectureKonsistTest.kt` | Konsist | Kotlin-native layering, framework-free domain, naming |
+| `packwerk/` | packwerk | Ruby package boundaries — root `packwerk.yml` + `example/*/package.yml` |
+
+**Adapting the rules.** The layering rules assume packages named `domain`,
+`application`, `infrastructure` (and `web`/`api`). Search the config files for
+those names and the `infra|infrastructure` regex, and swap in your own layer
+names and paths. Each file is commented with what to change.
 
 ## Appendix: glossary
 
