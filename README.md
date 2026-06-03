@@ -27,8 +27,8 @@ bin/install.sh
 # 2. run all available sensors over a target repo
 bin/analyse.sh /path/to/your/repo
 
-# ...or point at your own rule configs
-bin/analyse.sh --config /path/to/configs /path/to/your/repo
+# ...or point at your own rule configs / reports location
+bin/analyse.sh --config /path/to/configs --reports /path/to/reports /path/to/your/repo
 
 # 3. read the summary
 open reports/latest/summary.md
@@ -38,6 +38,10 @@ open reports/latest/summary.md
 `config/`); `DIR` must mirror its layout (`ast-grep/`, `semgrep/`, `detekt/`,
 etc.). The target repo defaults to the current directory.
 
+`--reports DIR` sets the top-level reports folder; each run lands in
+`DIR/<timestamp>/` with a `DIR/latest` symlink. Default is `./reports` in the
+current directory.
+
 `--sbt` additionally runs scalafix and scapegoat on sbt projects (it compiles,
 so it's slow and off by default). They need the matching sbt plugins added to
 the project; scapegoat is Scala 2.x only, so on a Scala 3 repo lean on lizard +
@@ -45,15 +49,17 @@ ast-grep + the compiler's own `-Wall`/`-Wunused` flags instead.
 
 `analyse.sh` detects which languages are present and which tools are installed,
 runs only what applies, and writes one report per tool plus an aggregated
-`summary.md` into `reports/<timestamp>/` (symlinked as `reports/latest/`).
-Missing tools are skipped with a note, never a hard failure.
+`summary.md` into `reports/<timestamp>/` under the current directory (symlinked
+as `reports/latest/`; change the reports folder with `--reports`). Missing tools
+are skipped with a note, never a hard failure.
 
 ## Output files
 
-Each run writes to `reports/<timestamp>/` (and `reports/latest/`). `summary.md`
-and `report.pdf` are summaries; `findings.csv` holds the full navigable detail;
-the rest are the raw per-tool reports. Files only appear when the matching tool
-ran.
+Each run writes to `reports/<timestamp>/` (the `reports` folder defaults to the
+current directory; override with `--reports DIR`) and updates `reports/latest/`.
+`summary.md` and `report.pdf` are summaries; `findings.csv` holds the full
+navigable detail; the rest are the raw per-tool reports. Files only appear when
+the matching tool ran.
 
 | File | What it is |
 |---|---|

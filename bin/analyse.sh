@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Run all available static-analysis sensors over a target repo.
-# Usage: bin/analyse.sh [--config DIR] [--sbt] [TARGET_DIR]
+# Usage: bin/analyse.sh [--config DIR] [--reports DIR] [--sbt] [TARGET_DIR]
 #   --config DIR   directory of tool rule configs (default: <project>/config)
+#   --reports DIR  top-level reports folder; runs land in DIR/<timestamp>/ with a
+#                  DIR/latest symlink (default: ./reports in the current directory)
 #   --sbt          for sbt projects, also run scalafix/scapegoat (compiles; slow)
 #   TARGET_DIR     repo to analyse (default: current directory)
 #
 # Detects which languages are present and which tools are installed, runs only
-# what applies, writes one report per tool into reports/<timestamp>/, and
+# what applies, writes one report per tool into <reports>/<timestamp>/, and
 # aggregates a summary.md. Missing tools are skipped, never fatal.
 set -uo pipefail
 
@@ -15,14 +17,17 @@ PY="${PYTHON:-python3}"   # keep in step with install.sh
 
 # --- args -------------------------------------------------------------------
 CONF="$HERE/config"
+REPORTS_DIR="$PWD/reports"
 TARGET_ARG=""
 RUN_SBT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONF="$2"; shift 2 ;;
     --config=*) CONF="${1#*=}"; shift ;;
+    --reports) REPORTS_DIR="$2"; shift 2 ;;
+    --reports=*) REPORTS_DIR="${1#*=}"; shift ;;
     --sbt) RUN_SBT=1; shift ;;
-    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) TARGET_ARG="$1"; shift ;;
   esac
@@ -30,11 +35,13 @@ done
 TARGET="$(cd "${TARGET_ARG:-$PWD}" 2>/dev/null && pwd)" || { echo "no such target dir: ${TARGET_ARG:-$PWD}" >&2; exit 2; }
 CONF_IN="$CONF"
 CONF="$(cd "$CONF_IN" 2>/dev/null && pwd)" || { echo "no such config dir: $CONF_IN" >&2; exit 2; }
+mkdir -p "$REPORTS_DIR" 2>/dev/null || { echo "cannot create reports dir: $REPORTS_DIR" >&2; exit 2; }
+REPORTS_DIR="$(cd "$REPORTS_DIR" && pwd)"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
-OUT="$HERE/reports/$STAMP"
+OUT="$REPORTS_DIR/$STAMP"
 mkdir -p "$OUT"
-ln -sfn "$OUT" "$HERE/reports/latest"
+ln -sfn "$OUT" "$REPORTS_DIR/latest"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '\033[1;33m  - skip: %s\033[0m\n' "$*"; }
