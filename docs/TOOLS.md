@@ -1,0 +1,106 @@
+# Tool selection & comparison
+
+Goal: open-source static analysis "sensors" producing machine-readable reports,
+covering **metrics** (complexity, size, coupling) and **dependency rules**
+(architectural constraints), across Scala, Kotlin, Java, Ruby, TypeScript/JS,
+and "many more" — hence a tree-sitter / polyglot backbone.
+
+The two sensor types map directly onto Fowler's framing: ordinary metrics are
+local complexity/size measures; *dependency rules* build a graph over
+modules/packages and check user-defined constraints (forbidden edges, layering,
+cycles).
+
+## 1. Polyglot backbone (run everywhere)
+
+These cover the long tail of languages with zero per-language setup. Prefer
+these first; add per-language tools only where they buy real depth.
+
+| Tool | Sensor type | What it gives | Why chosen |
+|---|---|---|---|
+| **scc** | Metrics | LOC, comment ratio, an estimated complexity score, COCOMO cost, and DRYness/uniqueness — across ~250 languages, very fast, native JSON. | Best single "how big / how complex overall" sensor; trivial to run in CI. |
+| **lizard** | Metrics | *True* cyclomatic complexity (CCN) and token/parameter counts **per function**, with threshold warnings. Supports C/C++, Java, C#, JS, Python, Ruby, PHP, Swift, **Scala**, Go, Lua, Rust, TypeScript, and more. | The per-function complexity workhorse; flags hotspots scc's heuristic can't. (No Kotlin — use detekt there.) |
+| **ast-grep** | Dependency rules | Structural search/lint over tree-sitter ASTs; custom rules in YAML. Use it to express "no import of X from Y", banned APIs, layering checks — in *any* tree-sitter language. | The polyglot way to do Fowler-style dependency rules without a per-language framework. Fast (Rust), JSON output. |
+| **semgrep** | Dependency rules | Same idea as ast-grep with a larger curated rule registry and ~30 languages; richer pattern logic (metavariables, taint). | Good alternative/complement to ast-grep for import-direction and forbidden-dependency rules; strong security overlap. |
+
+Why two dependency-rule tools: `ast-grep` is lighter and easier for bespoke
+import rules; `semgrep` has a bigger ecosystem and cross-file dataflow. Start
+with `ast-grep`; reach for `semgrep` when you need its registry or taint
+tracking.
+
+### Limits of the polyglot layer
+
+ast-grep/semgrep see *imports and call sites*, not a resolved
+package-dependency graph. For true afferent/efferent coupling, instability,
+abstractness and cycle-detection over a compiled module graph you still want a
+JVM-aware tool (below). The polyglot rules catch the common "forbidden edge"
+cases cheaply; the JVM tools catch the structural ones precisely.
+
+## 2. Per-language depth
+
+### Scala (JVM)
+- **scalafix** — semantic + syntactic rules; can encode dependency rules.
+- **scapegoat** — compiler-plugin inspections (code smells, complexity).
+- **scalastyle** — style + size/complexity thresholds.
+- **sbt-dependency-graph** / **sbt** `moduleGraph` — module dependency graphs.
+- Complexity per method is also covered by **lizard** (no build needed), which
+  is why the scaffold uses lizard for Scala and leaves scalafix/scapegoat as
+  build-integrated recommendations (they need sbt + compilation).
+
+### Kotlin (JVM)
+- **detekt** — the standard: complexity (cyclomatic, cognitive), long methods,
+  too-many-params, smells. Has a standalone CLI (`detekt-cli`) — *runnable
+  without Gradle*, so the scaffold runs it directly. XML/SARIF/HTML output.
+- **Konsist** — Kotlin-native architecture testing: layering, package
+  structure, dependency direction, naming. Runs as unit tests (needs the build).
+  Shipped as an example test in `config/konsist/`.
+- **ArchUnit** also works on Kotlin (JVM bytecode) with the caveat that
+  Kotlin-only features (extension/top-level functions) aren't fully modelled.
+
+### Java / JVM
+- **PMD** — complexity rules, plus **CPD** copy-paste/duplication detector;
+  standalone CLI, runnable without a build → used directly by the scaffold.
+- **ArchUnit** — the JVM dependency-rule tool: package/class/layer dependencies,
+  cyclic-dependency checks, slices. Runs as tests against compiled bytecode.
+  Example in `config/archunit/`.
+- **jdepend** — classic afferent/efferent coupling, instability, abstractness,
+  distance-from-main-sequence. Good for the Fowler-style stability metrics;
+  largely subsumed by ArchUnit for rule enforcement but still useful for the raw
+  numbers.
+- **checkstyle** — style + some size/complexity metrics.
+
+### Ruby
+- **flog** — ABC complexity per method (Ruby's de-facto complexity score).
+- **reek** — code smells (incl. coupling-related: feature envy, data clumps).
+- **flay** — structural duplication.
+- **rubycritic** — aggregates flog + reek + flay + churn into one report (and a
+  graded score). The scaffold runs rubycritic so you get all three at once.
+- **packwerk** — Shopify's package-boundary / dependency-rule enforcer
+  (the Ruby analogue of ArchUnit). Needs a `package.yml` layout; example in
+  `config/packwerk/`.
+
+### TypeScript / JavaScript
+- **dependency-cruiser** — *the* JS/TS dependency-rule tool: declarative
+  `forbidden`/`allowed` rules, orphan detection, circular-dependency errors,
+  graph visualisation. Runs standalone via `npx` → used by the scaffold.
+- **madge** — quick circular-dependency detection and dependency graphs.
+- **eslint** with `eslint-plugin-import` / `complexity` rule — import layering
+  and per-function complexity, if you already run eslint.
+
+## 3. Curated catalogues (to extend coverage)
+
+For any language not above, pick a tool from these and add a wrapper in
+`bin/analyse.sh`:
+- `analysis-tools-dev/static-analysis` — tagged by language and capability
+  (metrics, complexity, dependency).
+- `lukehutch/awesome-static-analysis`.
+
+## 4. Mapping to Fowler's sensor types
+
+| Fowler sensor | Polyglot | JVM | Ruby | TS/JS |
+|---|---|---|---|---|
+| Complexity / size metric | scc, lizard | detekt, PMD, scalafix | flog, rubycritic | eslint `complexity`, scc |
+| Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | reek | dependency-cruiser metrics |
+| Dependency *rule* (forbidden edge / layering / no-cycle) | ast-grep, semgrep | ArchUnit, Konsist | packwerk | dependency-cruiser, madge |
+
+Treat each row/column cell as an independent sensor a coding agent can poll;
+the scaffold's `summary.md` is the aggregated read-out.

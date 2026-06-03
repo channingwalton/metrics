@@ -1,0 +1,13 @@
+# Same forbidden-edge rule expressed for Scala import syntax.
+# Demonstrates the per-language duplication ast-grep needs for dependency rules.
+id: no-scala-domain-import-infra
+message: "Scala domain layer must not import infrastructure."
+severity: error
+language: Scala
+files:
+  - "**/domain/**"
+rule:
+  pattern: import $PKG
+constraints:
+  PKG:
+    regex: "infra|infrastructure"

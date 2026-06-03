@@ -1,0 +1,37 @@
+# Semgrep dependency rules — alternative/complement to ast-grep.
+# Run via: bin/analyse.sh  (or: semgrep --config import-rules.yml <dir>)
+rules:
+  - id: domain-must-not-import-infra-py
+    languages: [python]
+    severity: ERROR
+    message: "Domain layer must not import infrastructure."
+    paths:
+      include:
+        - "**/domain/**"
+    patterns:
+      - pattern-either:
+          - pattern: import $X.infra
+          - pattern: from $X.infra import $Y
+          - pattern: from infrastructure import $Y
+
+  - id: domain-must-not-import-infra-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Domain layer must not import infrastructure."
+    paths:
+      include:
+        - "**/domain/**"
+    patterns:
+      - pattern-regex: "import\\s+.*from\\s+['\"].*(infra|infrastructure).*['\"]"
+
+  - id: no-direct-sql-in-controllers
+    languages: [ruby]
+    severity: WARNING
+    message: "Controllers should not issue raw SQL — go through a repository."
+    paths:
+      include:
+        - "**/controllers/**"
+    patterns:
+      - pattern-either:
+          - pattern: $M.execute($SQL)
+          - pattern: ActiveRecord::Base.connection.execute($SQL)

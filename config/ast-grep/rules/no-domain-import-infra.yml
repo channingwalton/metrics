@@ -1,0 +1,21 @@
+# Example dependency rule (Fowler "dependency rules"):
+# the domain layer must not import from the infrastructure layer.
+#
+# This is the polyglot way to enforce a forbidden edge — duplicate/adapt the
+# `language` + `pattern` per language you care about. ast-grep matches the
+# import *syntax*, so write one rule per language's import form.
+#
+# Tighten `files`/`ignores` so the rule only applies to domain-layer sources.
+id: no-domain-import-infra
+message: "Domain layer must not depend on infrastructure layer."
+severity: error
+language: TypeScript
+files:
+  - "**/domain/**"
+rule:
+  any:
+    - pattern: import $$$ from '$PATH'
+    - pattern: import $$$ from "$PATH"
+constraints:
+  PATH:
+    regex: "infra|infrastructure"

@@ -1,0 +1,4 @@
+# ast-grep project config. Point it at the rule directory.
+# Run via: bin/analyse.sh (or: ast-grep scan --config sgconfig.yml <dir>)
+ruleDirs:
+  - rules
