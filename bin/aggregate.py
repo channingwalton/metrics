@@ -120,12 +120,16 @@ def detekt_section(out: Path) -> str:
         return "## Kotlin (detekt)\n\n- No findings.\n"
     lines = [
         "## Kotlin complexity & smells (detekt)\n",
-        f"- **{total} finding(s)**\n",
+        f"- **{total} finding(s)** — top rules:\n",
         "\n| Rule | Count |", "|---|--:|",
     ]
-    for rule, n in by_rule.most_common(15):
+    for rule, n in by_rule.most_common(10):
         lines.append(f"| {rule} | {n} |")
+    lines.append(CSV_NOTE)
     return "\n".join(lines) + "\n"
+
+
+CSV_NOTE = "\n_Per-violation file:line locations are in `findings.csv`._"
 
 
 def pmd_section(out: Path) -> str:
@@ -136,22 +140,24 @@ def pmd_section(out: Path) -> str:
         root = ET.parse(p).getroot()
     except Exception:
         return ""
-    # strip namespace
     by_rule = Counter()
-    total = 0
-    for el in root.iter():
-        if el.tag.endswith("violation"):
-            by_rule[el.get("rule", "?")] += 1
-            total += 1
+    for f in root.iter():
+        if not f.tag.endswith("file"):
+            continue
+        for v in f:
+            if v.tag.endswith("violation"):
+                by_rule[v.get("rule", "?")] += 1
+    total = sum(by_rule.values())
     if total == 0:
         return "## Java (PMD)\n\n- No violations.\n"
     lines = [
         "## Java rules (PMD)\n",
-        f"- **{total} violation(s)**\n",
+        f"- **{total} violation(s)** — top rules:\n",
         "\n| Rule | Count |", "|---|--:|",
     ]
-    for rule, n in by_rule.most_common(15):
+    for rule, n in by_rule.most_common(10):
         lines.append(f"| {rule} | {n} |")
+    lines.append(CSV_NOTE)
     return "\n".join(lines) + "\n"
 
 
@@ -169,8 +175,8 @@ def cpd_section(out: Path) -> str:
     tot_lines = sum(int(d.get("lines", 0)) for d in dups)
     return (
         "## Duplication (CPD)\n\n"
-        f"- **{len(dups)} duplicate block(s)**, **{tot_lines} lines** total.\n"
-    )
+        f"- **{len(dups)} duplicate block(s)**, **{tot_lines} lines** total\n"
+        + CSV_NOTE + "\n")
 
 
 def scapegoat_section(out: Path) -> str:
@@ -262,16 +268,15 @@ def ast_grep_section(out: Path) -> str:
             findings = []
     if not findings:
         return "## Dependency rules (ast-grep)\n\n- No violations found.\n"
+    by_rule = Counter(f.get("ruleId", "?") for f in findings)
     lines = [
         "## Dependency rules (ast-grep)\n",
         f"- **{len(findings)} rule violation(s)**\n",
-        "\n| Rule | File | Line |", "|---|---|--:|",
+        "\n| Rule | Count |", "|---|--:|",
     ]
-    for f in findings[:30]:
-        rng = f.get("range", {}).get("start", {})
-        lines.append(
-            f"| {f.get('ruleId','?')} | {f.get('file','?')} | {rng.get('line','?')} |"
-        )
+    for rule, n in by_rule.most_common():
+        lines.append(f"| {rule} | {n} |")
+    lines.append(CSV_NOTE)
     return "\n".join(lines) + "\n"
 
 
@@ -282,16 +287,15 @@ def semgrep_section(out: Path) -> str:
     results = data.get("results", [])
     if not results:
         return "## Dependency rules (semgrep)\n\n- No matches.\n"
+    by_rule = Counter(r.get("check_id", "?").split(".")[-1] for r in results)
     lines = [
         "## Dependency rules (semgrep)\n",
         f"- **{len(results)} match(es)**\n",
-        "\n| Rule | File | Line |", "|---|---|--:|",
+        "\n| Rule | Count |", "|---|--:|",
     ]
-    for r in results[:30]:
-        lines.append(
-            f"| {r.get('check_id','?').split('.')[-1]} | {r.get('path','?')} "
-            f"| {r.get('start',{}).get('line','?')} |"
-        )
+    for rule, n in by_rule.most_common():
+        lines.append(f"| {rule} | {n} |")
+    lines.append(CSV_NOTE)
     return "\n".join(lines) + "\n"
 
 
@@ -302,10 +306,18 @@ def depcruise_section(out: Path) -> str:
     summary = data.get("summary", {})
     err = summary.get("error", 0)
     warn = summary.get("warn", 0)
-    return (
-        "## Dependency rules (dependency-cruiser)\n\n"
-        f"- **{err} error(s)**, **{warn} warning(s)** against configured rules.\n"
-    )
+    viols = summary.get("violations", [])
+    lines = [
+        "## Dependency rules (dependency-cruiser)\n",
+        f"- **{err} error(s)**, **{warn} warning(s)** against configured rules\n",
+    ]
+    if viols:
+        by_rule = Counter(v.get("rule", {}).get("name", "?") for v in viols)
+        lines += ["\n| Rule | Count |", "|---|--:|"]
+        for rule, n in by_rule.most_common():
+            lines.append(f"| {rule} | {n} |")
+        lines.append(CSV_NOTE)
+    return "\n".join(lines) + "\n"
 
 
 def madge_section(out: Path) -> str:
@@ -315,6 +327,130 @@ def madge_section(out: Path) -> str:
     n = len(data)
     body = "- No circular dependencies.\n" if n == 0 else f"- **{n} circular dependency chain(s)** detected.\n"
     return "## Cycles (madge)\n\n" + body
+
+
+# ------------------------------------------------------ machine-readable ---
+def write_findings_csv(out: Path) -> int:
+    """Write findings.csv: one row per violation across all sensors.
+    Columns: category, tool, severity, rule, file, line, message."""
+    rows = []
+
+    def xml_root(name):
+        p = out / name
+        if not p.exists():
+            return None
+        try:
+            return ET.parse(p).getroot()
+        except Exception:
+            return None
+
+    # lizard — functions at/above the complexity threshold
+    lz = out / "lizard.csv"
+    if lz.exists():
+        with lz.open(newline="") as f:
+            for r in csv.reader(f):
+                if len(r) < 10:
+                    continue
+                try:
+                    ccn = int(r[1])
+                except ValueError:
+                    continue
+                if ccn >= CCN_WARN:
+                    rows.append(("complexity", "lizard", "warning", "high-complexity",
+                                 r[6], r[9], f"CCN {ccn} in {r[7]}"))
+
+    # detekt (checkstyle xml)
+    root = xml_root("detekt.xml")
+    if root is not None:
+        for fl in root.iter("file"):
+            for e in fl.iter("error"):
+                rows.append(("quality", "detekt", e.get("severity", ""),
+                             e.get("source", "?").split(".")[-1],
+                             fl.get("name", "?"), e.get("line", ""), e.get("message", "")))
+
+    # pmd
+    root = xml_root("pmd.xml")
+    if root is not None:
+        for fl in root.iter():
+            if not fl.tag.endswith("file"):
+                continue
+            for v in fl:
+                if v.tag.endswith("violation"):
+                    rows.append(("quality", "pmd", v.get("priority", ""),
+                                 v.get("rule", "?"), fl.get("name", "?"),
+                                 v.get("beginline", ""), (v.text or "").strip()))
+
+    # cpd duplication — one row per location, sharing a block id
+    root = xml_root("cpd.xml")
+    if root is not None:
+        blk = 0
+        for d in root.iter():
+            if not d.tag.endswith("duplication"):
+                continue
+            blk += 1
+            files = [(c.get("path"), c.get("line")) for c in d if c.tag.endswith("file")]
+            others = ", ".join(p for p, _ in files)
+            for path, line in files:
+                rows.append(("duplication", "cpd", "", f"duplicate-block-{blk}",
+                             path, line,
+                             f"{d.get('lines')}-line / {d.get('tokens')}-token block shared by: {others}"))
+
+    # scapegoat
+    root = xml_root("scapegoat.xml")
+    if root is not None:
+        for w in root.iter():
+            if w.tag.endswith("warning"):
+                rows.append(("quality", "scapegoat", w.get("level", ""),
+                             w.get("inspection", "?").split(".")[-1],
+                             w.get("file", "?"), w.get("line", ""), w.get("text", "")))
+
+    # ast-grep (json stream)
+    p = out / "ast-grep.json"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            line = line.strip().rstrip(",")
+            if not line or line in "[]":
+                continue
+            try:
+                d = json.loads(line)
+                rows.append(("dependency", "ast-grep", d.get("severity", ""),
+                             d.get("ruleId", "?"), d.get("file", "?"),
+                             d.get("range", {}).get("start", {}).get("line", ""),
+                             d.get("message", "")))
+            except Exception:
+                pass
+
+    # semgrep
+    sg = load_json(out / "semgrep.json")
+    if sg:
+        for r in sg.get("results", []):
+            rows.append(("dependency", "semgrep", r.get("extra", {}).get("severity", ""),
+                         r.get("check_id", "?").split(".")[-1], r.get("path", "?"),
+                         r.get("start", {}).get("line", ""),
+                         r.get("extra", {}).get("message", "")))
+
+    # dependency-cruiser
+    dc = load_json(out / "depcruise.json")
+    if dc:
+        for v in dc.get("summary", {}).get("violations", []):
+            to = v.get("to", v.get("unresolvedTo", ""))
+            rows.append(("dependency", "dependency-cruiser", v.get("rule", {}).get("severity", ""),
+                         v.get("rule", {}).get("name", "?"), v.get("from", "?"), "",
+                         f"{v.get('from','?')} -> {to}" if to else v.get("from", "?")))
+
+    # madge cycles
+    mad = load_json(out / "madge-circular.json")
+    if mad:
+        for chain in mad:
+            if isinstance(chain, list) and chain:
+                rows.append(("dependency", "madge", "warning", "circular",
+                             chain[0], "", " -> ".join(chain)))
+
+    with (out / "findings.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["category", "tool", "severity", "rule", "file", "line", "message"])
+        w.writerows(rows)
+    return len(rows)
 
 
 # ----------------------------------------------------------------- legend ---
@@ -421,10 +557,44 @@ def main():
         if s:
             parts.append(s)
 
+    try:
+        n_find = write_findings_csv(out)
+    except Exception as e:
+        n_find = -1
+        print(f"findings.csv failed: {e}", file=sys.stderr)
+    if n_find >= 0:
+        parts.append(
+            "## All findings\n\n"
+            f"- **{n_find}** machine-readable finding(s) in `findings.csv` "
+            "(columns: category, tool, severity, rule, file, line, message) — "
+            "load it into your editor/CI to jump to each violation.\n")
+
     parts.append(legend_section(out))
 
-    produced = sorted(p.name for p in out.iterdir() if p.name != "summary.md")
-    parts.append("## Reports produced\n\n" + "\n".join(f"- `{n}`" for n in produced) + "\n")
+    desc = {
+        "findings.csv": "every violation as one row — load in an editor/CI to jump to source",
+        "scc.json": "per-language size & complexity",
+        "scc.txt": "size & complexity, human-readable",
+        "lizard.csv": "per-function cyclomatic complexity",
+        "lizard-warnings.txt": "functions over the complexity threshold",
+        "pmd.xml": "full PMD violations",
+        "cpd.xml": "duplicate blocks with the duplicated code fragments",
+        "detekt.xml": "full detekt findings",
+        "scapegoat.xml": "full scapegoat warnings",
+        "scalafix.txt": "scalafix output",
+        "ast-grep.json": "dependency-rule violations",
+        "semgrep.json": "dependency-rule / quality matches",
+        "depcruise.json": "dependency-cruiser violations",
+        "madge-circular.json": "circular dependency chains",
+        "rubycritic": "Ruby complexity, churn & smells",
+        "report.pdf": "visual summary",
+    }
+    produced = sorted(p.name for p in out.iterdir()
+                      if p.name != "summary.md" and not p.name.startswith("."))
+    parts.append("## Reports produced\n\n_This summary points at the files below; "
+                 "`findings.csv` has the full navigable detail._\n\n"
+                 + "\n".join(f"- `{n}`" + (f" — {desc[n]}" if n in desc else "")
+                             for n in produced) + "\n")
 
     (out / "summary.md").write_text("\n".join(parts))
     print(f"wrote {out/'summary.md'}")

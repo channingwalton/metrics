@@ -401,7 +401,7 @@ def build(out: Path, target: str):
         ]))
         return tbl
 
-    # --- dependency-rule findings -------------------------------------------
+    # --- dependency-rule findings (summary; detail in findings.csv) ---------
     ag = read_ast_grep(out)
     sg = read_semgrep(out)
     dc = read_depcruise(out)
@@ -415,12 +415,12 @@ def build(out: Path, target: str):
     if notes:
         story.append(Paragraph(" &nbsp;·&nbsp; ".join(notes), meta))
         story.append(Spacer(1, 0.2 * cm))
-    rule_rows = [("ast-grep", r, f, l) for r, f, l in ag] + \
-                [("semgrep", r, f, l) for r, f, l in sg]
-    if rule_rows:
-        story.append(finding_table(
-            ["Tool", "Rule", "File", "Line"], rule_rows[:30],
-            [2.2 * cm, 4.3 * cm, 9 * cm, 1.5 * cm]))
+    rule_counts = Counter(("ast-grep", r) for r, _, _ in ag)
+    rule_counts.update(("semgrep", r) for r, _, _ in sg)
+    if rule_counts:
+        crows = [(tool, rule, n) for (tool, rule), n in rule_counts.most_common()]
+        story.append(finding_table(["Tool", "Rule", "Count"], crows,
+                                    [3 * cm, 10 * cm, 2 * cm]))
     elif not notes:
         story.append(Paragraph("No dependency-rule violations found.", meta))
     else:
@@ -490,6 +490,40 @@ def build(out: Path, target: str):
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         story.append(rt)
+
+    # --- reports reference --------------------------------------------------
+    story += [Spacer(1, 0.5 * cm), Paragraph("Reports", h2),
+              Paragraph("This PDF is a summary. Full, navigable detail is in the "
+                        "companion files (same folder):", meta), Spacer(1, 0.2 * cm)]
+    desc = {
+        "findings.csv": "Every violation, one row each (category, tool, severity, rule, file, line, message) — load in an editor/CI to jump to source.",
+        "summary.md": "Markdown version of this report.",
+        "scc.json": "Per-language size & complexity.",
+        "lizard.csv": "Per-function cyclomatic complexity.",
+        "pmd.xml": "Full PMD violations.",
+        "cpd.xml": "Duplicate code blocks with the duplicated fragments.",
+        "detekt.xml": "Full detekt findings.",
+        "scapegoat.xml": "Full scapegoat warnings.",
+        "ast-grep.json": "Dependency-rule violations.",
+        "semgrep.json": "Dependency-rule / quality matches.",
+        "depcruise.json": "Dependency-cruiser violations.",
+        "madge-circular.json": "Circular dependency chains.",
+        "rubycritic/": "Ruby complexity, churn & smells.",
+    }
+    rrows = []
+    for name, d in desc.items():
+        if (out / name.rstrip("/")).exists():
+            rrows.append([Paragraph(f"<b>{name}</b>", cellp), Paragraph(d, cellp)])
+    if rrows:
+        rtab = Table(rrows, colWidths=[3.8 * cm, 13.2 * cm])
+        rtab.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(GRID)),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(rtab)
 
     doc.build(story)
     print(f"wrote {out/'report.pdf'}")
