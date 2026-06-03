@@ -48,6 +48,30 @@ runs only what applies, and writes one report per tool plus an aggregated
 `summary.md` into `reports/<timestamp>/` (symlinked as `reports/latest/`).
 Missing tools are skipped with a note, never a hard failure.
 
+## Output files
+
+Each run writes to `reports/<timestamp>/` (and `reports/latest/`). `summary.md`
+and `report.pdf` are summaries; `findings.csv` holds the full navigable detail;
+the rest are the raw per-tool reports. Files only appear when the matching tool
+ran.
+
+| File | What it is |
+|---|---|
+| `summary.md` | Markdown summary — counts, complexity distribution, top rules |
+| `report.pdf` | Visual summary — stat cards, charts, hotspots |
+| `findings.csv` | **Every violation, one row each** (`category, tool, severity, rule, file, line, message`) — load in an editor/CI to jump to source |
+| `scc.json` / `scc.txt` | Per-language size & complexity |
+| `lizard.csv` | Per-function cyclomatic complexity |
+| `lizard-warnings.txt` | Functions over the complexity threshold |
+| `ast-grep.json` | Dependency-rule violations (custom rules) |
+| `semgrep.json` | Dependency-rule / quality matches |
+| `detekt.xml` | Kotlin complexity & smell findings |
+| `pmd.xml` / `cpd.xml` | Java rule violations / duplicate code blocks |
+| `depcruise.json` | JS/TS dependency-rule violations + cycles |
+| `madge-circular.json` | JS/TS circular dependency chains |
+| `rubycritic/` | Ruby complexity, churn & smells (HTML/JSON) |
+| `scapegoat.xml` / `scalafix.txt` | Scala inspections / lint (only with `--sbt`) |
+
 ## What runs
 
 | Sensor | Tool | Languages | Output |
@@ -59,7 +83,7 @@ Missing tools are skipped with a note, never a hard failure.
 | Complexity / smells | `detekt` | Kotlin | `detekt.xml` |
 | Complexity / duplication | `pmd` + `cpd` | Java, others | `pmd.xml`, `cpd.xml` |
 | Dependency rules + cycles | `dependency-cruiser` | JS/TS | `depcruise.json` |
-| Module graph / cycles | `madge` | JS/TS | `madge.json` |
+| Module graph / cycles | `madge` | JS/TS | `madge-circular.json` |
 | Complexity / churn / smells | `rubycritic` (`flog`, `reek`, `flay`) | Ruby | `rubycritic/` |
 
 Architectural dependency-rule tools that require a build (ArchUnit for the JVM,
