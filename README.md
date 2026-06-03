@@ -109,6 +109,14 @@ need compilation or a package layout, so `analyse.sh` does not run them):
 those names and the `infra|infrastructure` regex, and swap in your own layer
 names and paths. Each file is commented with what to change.
 
+**Excluded paths.** Every sensor skips generated/vendored code so the metrics
+reflect real source: `node_modules`, `.git`, `build`, `dist`, `out`, `target`,
+`.gradle`, `.idea`, `vendor`, `coverage`, `.next`, `.turbo`, `.venv`,
+`__pycache__`, plus `*.min.js`. Override the directory list per run with the
+`EXCLUDE_DIRS` env var, e.g. `EXCLUDE_DIRS="node_modules dist generated"
+bin/analyse.sh <repo>`. Tests are **not** excluded — they're analysed like
+production code.
+
 ## Appendix: glossary
 
 Acronyms and metrics used in this toolkit and its reports.

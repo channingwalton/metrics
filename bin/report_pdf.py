@@ -12,6 +12,8 @@ Requires: matplotlib, reportlab (installed by bin/install.sh).
 import csv
 import json
 import sys
+import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,20 +81,140 @@ def read_lizard(out):
     return rows
 
 
-def count_dep_violations(out):
-    n = 0
+def _short(path, n=3):
+    parts = Path(path).parts
+    return "/".join(parts[-n:]) if len(parts) > n else str(path)
+
+
+def read_ast_grep(out):
+    p = out / "ast-grep.json"
+    found = []
+    if not p.exists():
+        return found
+    for line in p.read_text().splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line in "[]":
+            continue
+        try:
+            d = json.loads(line)
+            found.append((d.get("ruleId", "?"), _short(d.get("file", "?")),
+                          d.get("range", {}).get("start", {}).get("line", "?")))
+        except Exception:
+            pass
+    return found
+
+
+def read_semgrep(out):
+    data = load_json(out / "semgrep.json")
+    if not data:
+        return []
+    return [
+        (r.get("check_id", "?").split(".")[-1], _short(r.get("path", "?")),
+         r.get("start", {}).get("line", "?"))
+        for r in data.get("results", [])
+    ]
+
+
+def read_depcruise(out):
+    d = load_json(out / "depcruise.json")
+    if not d:
+        return None
+    s = d.get("summary", {})
+    return s.get("error", 0), s.get("warn", 0)
+
+
+def read_madge(out):
+    d = load_json(out / "madge-circular.json")
+    return None if d is None else len(d)
+
+
+DEPCRUISE_DESC = {
+    "no-circular": "Circular dependency between modules.",
+    "no-orphans": "Module not reachable from anywhere (likely dead code).",
+    "no-deprecated-core": "Depends on a deprecated Node core module.",
+    "not-to-unresolvable": "Imports a module that cannot be resolved.",
+    "no-non-package-json": "Imports an npm package not declared in package.json.",
+    "not-to-dev-dep": "Production code depends on a devDependency.",
+    "not-to-test": "Production code imports a test file.",
+    "domain-not-to-infra": "Domain layer depends on infrastructure.",
+}
+
+
+def triggered_rules(out):
+    """Distinct dependency-rule ids that fired, mapped to (tool, description)."""
+    rules = {}
     p = out / "ast-grep.json"
     if p.exists():
         for line in p.read_text().splitlines():
             line = line.strip().rstrip(",")
-            if line and line not in "[]":
-                try:
-                    json.loads(line); n += 1
-                except Exception:
-                    pass
+            if not line or line in "[]":
+                continue
+            try:
+                d = json.loads(line)
+                rules.setdefault(d.get("ruleId", "?"), ("ast-grep", d.get("message", "")))
+            except Exception:
+                pass
+    sg = load_json(out / "semgrep.json")
+    if sg:
+        for r in sg.get("results", []):
+            rid = r.get("check_id", "?").split(".")[-1]
+            rules.setdefault(rid, ("semgrep", r.get("extra", {}).get("message", "")))
     dc = load_json(out / "depcruise.json")
     if dc:
-        n += dc.get("summary", {}).get("error", 0)
+        for v in dc.get("summary", {}).get("violations", []):
+            name = v.get("rule", {}).get("name", "?")
+            rules.setdefault(name, ("dependency-cruiser", DEPCRUISE_DESC.get(name, "")))
+    return rules
+
+
+def _count_xml(out, fname, tag, attr):
+    p = out / fname
+    if not p.exists():
+        return None
+    try:
+        root = ET.parse(p).getroot()
+    except Exception:
+        return None
+    c = Counter()
+    for el in root.iter():
+        if el.tag.endswith(tag):
+            c[(el.get(attr, "?") or "?").split(".")[-1]] += 1
+    return c
+
+
+def read_detekt(out):
+    return _count_xml(out, "detekt.xml", "error", "source")
+
+
+def read_pmd(out):
+    return _count_xml(out, "pmd.xml", "violation", "rule")
+
+
+def read_scapegoat(out):
+    return _count_xml(out, "scapegoat.xml", "warning", "inspection")
+
+
+def read_rubycritic(out):
+    d = out / "rubycritic"
+    if not d.exists():
+        return []
+    js = list(d.rglob("*.json"))
+    if not js:
+        return []
+    data = load_json(js[0])
+    mods = data if isinstance(data, list) else (
+        data.get("analysed_modules", []) if isinstance(data, dict) else [])
+    mods = sorted(mods, key=lambda m: m.get("complexity", 0) or 0, reverse=True)
+    return [(m.get("rating", "?"), m.get("complexity", "?"),
+             m.get("churn", "?"), _short(m.get("path") or m.get("name", "?")))
+            for m in mods]
+
+
+def count_dep_violations(out):
+    n = len(read_ast_grep(out)) + len(read_semgrep(out))
+    dc = read_depcruise(out)
+    if dc:
+        n += dc[0]
     return n
 
 
@@ -263,6 +385,68 @@ def build(out: Path, target: str):
                 tt.setStyle(TableStyle([("TEXTCOLOR", (0, i), (0, i), colors.HexColor(WARN))]))
         story.append(tt)
 
+    # styles shared by finding tables
+    cellp = ParagraphStyle("cellp", parent=styles["Normal"], fontSize=8, leading=10)
+
+    def finding_table(headers, data_rows, widths):
+        rows = [[Paragraph(f"<b>{h}</b>", cellp) for h in headers]]
+        rows += [[Paragraph(str(c), cellp) for c in r] for r in data_rows]
+        tbl = Table(rows, colWidths=widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(ACCENT)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(GRID)),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        return tbl
+
+    # --- dependency-rule findings -------------------------------------------
+    ag = read_ast_grep(out)
+    sg = read_semgrep(out)
+    dc = read_depcruise(out)
+    mad = read_madge(out)
+    story += [Spacer(1, 0.5 * cm), Paragraph("Dependency-rule findings", h2)]
+    notes = []
+    if dc is not None:
+        notes.append(f"dependency-cruiser: <b>{dc[0]}</b> error(s), <b>{dc[1]}</b> warning(s)")
+    if mad is not None:
+        notes.append(f"madge: <b>{mad}</b> circular dependency chain(s)")
+    if notes:
+        story.append(Paragraph(" &nbsp;·&nbsp; ".join(notes), meta))
+        story.append(Spacer(1, 0.2 * cm))
+    rule_rows = [("ast-grep", r, f, l) for r, f, l in ag] + \
+                [("semgrep", r, f, l) for r, f, l in sg]
+    if rule_rows:
+        story.append(finding_table(
+            ["Tool", "Rule", "File", "Line"], rule_rows[:30],
+            [2.2 * cm, 4.3 * cm, 9 * cm, 1.5 * cm]))
+    elif not notes:
+        story.append(Paragraph("No dependency-rule violations found.", meta))
+    else:
+        story.append(Paragraph("No forbidden-import / layering violations found.", meta))
+
+    # --- code-quality findings ----------------------------------------------
+    detekt, pmd, scape = read_detekt(out), read_pmd(out), read_scapegoat(out)
+    ruby = read_rubycritic(out)
+    quality_blocks = []
+    for title, counts in (("Kotlin (detekt)", detekt), ("Java (PMD)", pmd),
+                          ("Scala (scapegoat)", scape)):
+        if counts:
+            quality_blocks.append((title,
+                finding_table(["Rule", "Count"],
+                              [(k, v) for k, v in counts.most_common(12)],
+                              [13 * cm, 4 * cm])))
+    if ruby:
+        quality_blocks.append(("Ruby (rubycritic)",
+            finding_table(["Rating", "Complexity", "Churn", "File"], ruby[:12],
+                          [2 * cm, 2.5 * cm, 2 * cm, 10.5 * cm])))
+    if quality_blocks:
+        story += [Spacer(1, 0.5 * cm), Paragraph("Code-quality findings", h2)]
+        for title, tbl in quality_blocks:
+            story += [Spacer(1, 0.15 * cm),
+                      Paragraph(f"<b>{title}</b>", cellp), tbl]
+
     # legend
     story += [Spacer(1, 0.5 * cm), Paragraph("Legend", h2)]
     legend = [
@@ -286,6 +470,26 @@ def build(out: Path, target: str):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(lt)
+
+    # definitions for the dependency rules that actually fired
+    fired = triggered_rules(out)
+    if fired:
+        story += [Spacer(1, 0.3 * cm),
+                  Paragraph("<b>Dependency rules triggered in this report</b>", cellp)]
+        rrows = [[Paragraph(f"<b>{rid}</b>", cellp), Paragraph(tool, cellp),
+                  Paragraph(desc, cellp)]
+                 for rid, (tool, desc) in sorted(fired.items())]
+        rt = Table([[Paragraph("<b>Rule</b>", cellp), Paragraph("<b>Tool</b>", cellp),
+                     Paragraph("<b>Meaning</b>", cellp)]] + rrows,
+                   colWidths=[4.5 * cm, 3 * cm, 9.5 * cm])
+        rt.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(ACCENT)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(GRID)),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(rt)
 
     doc.build(story)
     print(f"wrote {out/'report.pdf'}")

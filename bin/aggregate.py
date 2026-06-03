@@ -335,13 +335,67 @@ LEGEND = [
 ]
 
 
-def legend_section() -> str:
+# Descriptions for dependency-cruiser rules (their output carries only the name).
+DEPCRUISE_DESC = {
+    "no-circular": "Circular dependency between modules.",
+    "no-orphans": "Module not reachable from anywhere (likely dead code).",
+    "no-deprecated-core": "Depends on a deprecated Node core module.",
+    "not-to-unresolvable": "Imports a module that cannot be resolved.",
+    "no-non-package-json": "Imports an npm package not declared in package.json.",
+    "not-to-dev-dep": "Production code depends on a devDependency.",
+    "not-to-test": "Production code imports a test file.",
+    "domain-not-to-infra": "Domain layer depends on infrastructure.",
+}
+
+
+def triggered_rules(out: Path):
+    """Distinct dependency-rule ids that actually fired, with a description."""
+    rules = {}  # id -> (tool, description)
+    # ast-grep — findings carry their own message
+    p = out / "ast-grep.json"
+    if p.exists():
+        for line in p.read_text().splitlines():
+            line = line.strip().rstrip(",")
+            if not line or line in "[]":
+                continue
+            try:
+                d = json.loads(line)
+                rules.setdefault(d.get("ruleId", "?"), ("ast-grep", d.get("message", "")))
+            except Exception:
+                pass
+    # semgrep
+    sg = load_json(out / "semgrep.json")
+    if sg:
+        for r in sg.get("results", []):
+            rid = r.get("check_id", "?").split(".")[-1]
+            rules.setdefault(rid, ("semgrep", r.get("extra", {}).get("message", "")))
+    # dependency-cruiser
+    dc = load_json(out / "depcruise.json")
+    if dc:
+        for v in dc.get("summary", {}).get("violations", []):
+            name = v.get("rule", {}).get("name", "?")
+            rules.setdefault(name, ("dependency-cruiser", DEPCRUISE_DESC.get(name, "")))
+    return rules
+
+
+def legend_section(out: Path) -> str:
     lines = [
         "## Legend\n",
         "| Term | Meaning |", "|---|---|",
     ]
     for term, meaning in LEGEND:
         lines.append(f"| **{term}** | {meaning} |")
+
+    fired = triggered_rules(out)
+    if fired:
+        lines += [
+            "\n**Dependency rules triggered in this report:**\n",
+            "| Rule | Tool | Meaning |", "|---|---|---|",
+        ]
+        for rid in sorted(fired):
+            tool, desc = fired[rid]
+            lines.append(f"| `{rid}` | {tool} | {desc} |")
+
     lines.append("\n_Full glossary: `docs/TOOLS.md` § Appendix._")
     return "\n".join(lines) + "\n"
 
@@ -367,7 +421,7 @@ def main():
         if s:
             parts.append(s)
 
-    parts.append(legend_section())
+    parts.append(legend_section(out))
 
     produced = sorted(p.name for p in out.iterdir() if p.name != "summary.md")
     parts.append("## Reports produced\n\n" + "\n".join(f"- `{n}`" for n in produced) + "\n")

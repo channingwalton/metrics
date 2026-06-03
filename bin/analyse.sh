@@ -40,36 +40,53 @@ say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 skip() { printf '\033[1;33m  - skip: %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Generated/vendored directories excluded from every sensor. Override with
+# EXCLUDE_DIRS="dir1 dir2 ..." in the environment.
+IFS=' ' read -r -a IGNORE_DIRS <<< "${EXCLUDE_DIRS:-node_modules .git build dist out target .gradle .idea vendor coverage .next .turbo .venv __pycache__}"
+
+# Build the per-tool exclude arguments from IGNORE_DIRS (+ minified files).
+FIND_PRUNE=(); SCC_EXCLUDE=""; LIZARD_X=(-x "*.min.js"); AG_GLOBS=(--globs '!**/*.min.js'); SG_EXCLUDE=(--exclude '*.min.js')
+for d in "${IGNORE_DIRS[@]}"; do
+  FIND_PRUNE+=( -not -path "*/$d/*" )
+  SCC_EXCLUDE="${SCC_EXCLUDE:+$SCC_EXCLUDE,}$d"
+  LIZARD_X+=( -x "*/$d/*" )
+  AG_GLOBS+=( --globs "!**/$d/**" )
+  SG_EXCLUDE+=( --exclude "$d" )
+done
+DETEKT_EXC="$(printf '**/%s/**,' "${IGNORE_DIRS[@]}")"; DETEKT_EXC="${DETEKT_EXC%,}"
+
 # present LANG_GLOB -> 0 if any matching file exists under TARGET
-present() { find "$TARGET" -type f \( "$@" \) -not -path '*/node_modules/*' -not -path '*/.git/*' -print -quit 2>/dev/null | grep -q .; }
+present() { find "$TARGET" -type f \( "$@" \) "${FIND_PRUNE[@]}" -print -quit 2>/dev/null | grep -q .; }
 
 say "Target:  $TARGET"
 say "Config:  $CONF"
 say "Reports: $OUT"
+say "Ignored: ${IGNORE_DIRS[*]}"
 
 # ---------------------------------------------------------------- polyglot ---
 if have scc; then
-  scc --format json --output "$OUT/scc.json" "$TARGET" 2>/dev/null && ok "scc.json (size/complexity/COCOMO)"
-  scc "$TARGET" > "$OUT/scc.txt" 2>/dev/null
+  scc --format json --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' --output "$OUT/scc.json" "$TARGET" 2>/dev/null && ok "scc.json (size/complexity/COCOMO)"
+  scc --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' "$TARGET" > "$OUT/scc.txt" 2>/dev/null
 else skip "scc (size/complexity)"; fi
 
 if have lizard; then
   # CSV: nloc,ccn,token,param,length,location,file,function,...
-  lizard "$TARGET" --csv > "$OUT/lizard.csv" 2>/dev/null && ok "lizard.csv (per-function CCN)"
-  lizard "$TARGET" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null
+  lizard "$TARGET" "${LIZARD_X[@]}" --csv > "$OUT/lizard.csv" 2>/dev/null && ok "lizard.csv (per-function CCN)"
+  lizard "$TARGET" "${LIZARD_X[@]}" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null
 else skip "lizard (cyclomatic complexity)"; fi
 
 # dependency rules — custom YAML rules under config/ast-grep/rules
 if have ast-grep; then
   if [ -f "$CONF/ast-grep/sgconfig.yml" ]; then
     # ast-grep exits non-zero when it FINDS violations, so don't gate on rc.
-    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml --json=stream "$TARGET" > "$OUT/ast-grep.json" 2>/dev/null) || true
+    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml "${AG_GLOBS[@]}" --json=stream "$TARGET" > "$OUT/ast-grep.json" 2>/dev/null) || true
     [ -f "$OUT/ast-grep.json" ] && ok "ast-grep.json (dependency rules)"
   else skip "ast-grep (no sgconfig.yml)"; fi
 else skip "ast-grep (dependency rules)"; fi
 
 if have semgrep && [ -f "$CONF/semgrep/import-rules.yml" ]; then
-  semgrep --config "$CONF/semgrep/import-rules.yml" --json --quiet "$TARGET" > "$OUT/semgrep.json" 2>/dev/null || true
+  semgrep --config "$CONF/semgrep/import-rules.yml" "${SG_EXCLUDE[@]}" --json --quiet "$TARGET" > "$OUT/semgrep.json" 2>/dev/null || true
   [ -s "$OUT/semgrep.json" ] && ok "semgrep.json (dependency rules)"
 else skip "semgrep (dependency rules)"; fi
 
@@ -77,7 +94,7 @@ else skip "semgrep (dependency rules)"; fi
 if present -name '*.kt' -o -name '*.kts'; then
   if have detekt; then
     DKCFG=""; [ -f "$CONF/detekt/detekt.yml" ] && DKCFG="--config $CONF/detekt/detekt.yml --build-upon-default-config"
-    detekt --input "$TARGET" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1
+    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1
     [ -f "$OUT/detekt.xml" ] && ok "detekt.xml (Kotlin complexity/smells)"
   else skip "detekt (Kotlin present, tool missing)"; fi
 fi
