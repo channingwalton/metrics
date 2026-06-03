@@ -1,8 +1,9 @@
 # metrics — a static analysis sensor toolkit
 
 A toolkit of open-source static analysis tools that emit machine-readable
-reports for use as "sensors" for coding agents, in the sense of Martin Fowler's
-[Sensors for coding agents](https://martinfowler.com/articles/sensors-for-coding-agents.html#StaticCodeAnalysisDependencyRules).
+reports for use as "sensors" for coding agents, in the sense of Birgitta
+Böckeler's [Sensors for coding agents](https://martinfowler.com/articles/sensors-for-coding-agents.html#StaticCodeAnalysisDependencyRules)
+(published on martinfowler.com).
 
 It treats static analysis as two distinct sensor types:
 
