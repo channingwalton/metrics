@@ -23,7 +23,7 @@ public class LayeredArchitectureTest {
             .layer("Domain").definedBy("..domain..")
             .layer("Application").definedBy("..application..")
             .layer("Infrastructure").definedBy("..infrastructure..")
-            // Fowler-style dependency rules: who may depend on whom.
+            // Dependency rules: who may depend on whom.
             .whereLayer("Infrastructure").mayNotBeAccessedByAnyLayer()
             .whereLayer("Application").mayOnlyBeAccessedByLayers("Infrastructure")
             .whereLayer("Domain").mayOnlyBeAccessedByLayers("Application", "Infrastructure");

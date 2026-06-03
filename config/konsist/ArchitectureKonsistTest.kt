@@ -20,7 +20,7 @@ class ArchitectureKonsistTest {
     @Test
     fun `layers respect dependency direction`() {
         Konsist.scopeFromProject().assertArchitecture {
-            // Fowler-style dependency rules.
+            // Dependency rules.
             domain.dependsOnNothing()
             application.dependsOn(domain)
             infrastructure.dependsOn(application, domain)

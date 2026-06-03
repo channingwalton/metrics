@@ -277,6 +277,35 @@ def madge_section(out: Path) -> str:
     return "## Cycles (madge)\n\n" + body
 
 
+# ----------------------------------------------------------------- legend ---
+LEGEND = [
+    ("CCN", "Cyclomatic complexity — independent paths through a function; "
+            f"higher = harder to test. Flagged at ≥ {CCN_WARN}."),
+    ("NLOC", "Non-comment lines of code, per function."),
+    ("LOC", "Lines of code (excludes blanks and comments)."),
+    ("max / p95 / median / mean", "The CCN distribution across all functions, "
+            "not a sum."),
+    ("density (CCN / LOC)", "Total CCN ÷ lines of code; complexity "
+            "normalised for size."),
+    ("Complexity* (scc)", "A per-language keyword heuristic that tracks size; "
+            "shown per language, not summed."),
+    ("Dep-rule breach", "A violated dependency rule (forbidden import, layer "
+            "violation, or cycle)."),
+    ("churn", "How often a file changes in version control (rubycritic)."),
+]
+
+
+def legend_section() -> str:
+    lines = [
+        "## Legend\n",
+        "| Term | Meaning |", "|---|---|",
+    ]
+    for term, meaning in LEGEND:
+        lines.append(f"| **{term}** | {meaning} |")
+    lines.append("\n_Full glossary: `docs/TOOLS.md` § Appendix._")
+    return "\n".join(lines) + "\n"
+
+
 # ------------------------------------------------------------------ main ---
 def main():
     out = Path(sys.argv[1])
@@ -297,6 +326,8 @@ def main():
             s = f"## {fn.__name__.replace('_section','')}\n\n- (failed to parse: {e})\n"
         if s:
             parts.append(s)
+
+    parts.append(legend_section())
 
     produced = sorted(p.name for p in out.iterdir() if p.name != "summary.md")
     parts.append("## Reports produced\n\n" + "\n".join(f"- `{n}`" for n in produced) + "\n")

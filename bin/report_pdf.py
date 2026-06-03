@@ -263,6 +263,30 @@ def build(out: Path, target: str):
                 tt.setStyle(TableStyle([("TEXTCOLOR", (0, i), (0, i), colors.HexColor(WARN))]))
         story.append(tt)
 
+    # legend
+    story += [Spacer(1, 0.5 * cm), Paragraph("Legend", h2)]
+    legend = [
+        ("CCN", f"Cyclomatic complexity — independent paths through a function; "
+                f"higher = harder to test. Flagged at ≥ {CCN_WARN}."),
+        ("NLOC", "Non-comment lines of code, per function."),
+        ("LOC", "Lines of code (excludes blanks and comments)."),
+        ("max / p95 / median / mean", "The CCN distribution across all functions, not a sum."),
+        ("CCN / LOC", "Total CCN ÷ lines of code; complexity normalised for size."),
+        ("Complexity (scc)", "A per-language keyword heuristic that tracks size; not summed."),
+        ("Dep-rule breaches", "Violated dependency rules (forbidden import, layer violation, or cycle)."),
+    ]
+    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=9, leading=12)
+    ldata = [[Paragraph(f"<b>{t}</b>", cell), Paragraph(m, cell)] for t, m in legend]
+    lt = Table(ldata, colWidths=[4.5 * cm, 12.5 * cm])
+    lt.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(GRID)),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(lt)
+
     doc.build(story)
     print(f"wrote {out/'report.pdf'}")
 

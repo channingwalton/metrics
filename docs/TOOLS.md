@@ -5,7 +5,7 @@ covering **metrics** (complexity, size, coupling) and **dependency rules**
 (architectural constraints), across Scala, Kotlin, Java, Ruby, TypeScript/JS,
 and "many more" — hence a tree-sitter / polyglot backbone.
 
-The two sensor types map directly onto Fowler's framing: ordinary metrics are
+The two sensor types map directly onto Böckeler's framing: ordinary metrics are
 local complexity/size measures; *dependency rules* build a graph over
 modules/packages and check user-defined constraints (forbidden edges, layering,
 cycles).
@@ -19,7 +19,7 @@ these first; add per-language tools only where they buy real depth.
 |---|---|---|---|
 | **scc** | Metrics | LOC, comment ratio, an estimated complexity score, COCOMO cost, and DRYness/uniqueness — across ~250 languages, very fast, native JSON. | Best single "how big / how complex overall" sensor; trivial to run in CI. |
 | **lizard** | Metrics | *True* cyclomatic complexity (CCN) and token/parameter counts **per function**, with threshold warnings. Supports C/C++, Java, C#, JS, Python, Ruby, PHP, Swift, **Scala**, Go, Lua, Rust, TypeScript, and more. | The per-function complexity workhorse; flags hotspots scc's heuristic can't. (No Kotlin — use detekt there.) |
-| **ast-grep** | Dependency rules | Structural search/lint over tree-sitter ASTs; custom rules in YAML. Use it to express "no import of X from Y", banned APIs, layering checks — in *any* tree-sitter language. | The polyglot way to do Fowler-style dependency rules without a per-language framework. Fast (Rust), JSON output. |
+| **ast-grep** | Dependency rules | Structural search/lint over tree-sitter ASTs; custom rules in YAML. Use it to express "no import of X from Y", banned APIs, layering checks — in *any* tree-sitter language. | The polyglot way to do architectural dependency rules without a per-language framework. Fast (Rust), JSON output. |
 | **semgrep** | Dependency rules | Same idea as ast-grep with a larger curated rule registry and ~30 languages; richer pattern logic (metavariables, taint). | Good alternative/complement to ast-grep for import-direction and forbidden-dependency rules; strong security overlap. |
 
 Why two dependency-rule tools: `ast-grep` is lighter and easier for bespoke
@@ -63,7 +63,7 @@ cases cheaply; the JVM tools catch the structural ones precisely.
   cyclic-dependency checks, slices. Runs as tests against compiled bytecode.
   Example in `config/archunit/`.
 - **jdepend** — classic afferent/efferent coupling, instability, abstractness,
-  distance-from-main-sequence. Good for the Fowler-style stability metrics;
+  distance-from-main-sequence. Good for the stability metrics;
   largely subsumed by ArchUnit for rule enforcement but still useful for the raw
   numbers.
 - **checkstyle** — style + some size/complexity metrics.
@@ -94,9 +94,9 @@ For any language not above, pick a tool from these and add a wrapper in
   (metrics, complexity, dependency).
 - `lukehutch/awesome-static-analysis`.
 
-## 4. Mapping to Fowler's sensor types
+## 4. Mapping to the two sensor types
 
-| Fowler sensor | Polyglot | JVM | Ruby | TS/JS |
+| Sensor type | Polyglot | JVM | Ruby | TS/JS |
 |---|---|---|---|---|
 | Complexity / size metric | scc, lizard | detekt, PMD, scalafix | flog, rubycritic | eslint `complexity`, scc |
 | Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | reek | dependency-cruiser metrics |
