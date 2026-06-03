@@ -76,6 +76,8 @@ module.exports = {
   ],
   options: {
     doNotFollow: { path: "node_modules" },
+    // Skip generated/vendored output so complexity & cycle reports reflect source.
+    exclude: { path: "(^|/)(dist|build|out|coverage|\\.next|\\.turbo)/|\\.min\\.js$" },
     tsPreCompilationDeps: true,
     // Honour tsconfig path aliases if present.
     // tsConfig: { fileName: "tsconfig.json" },
