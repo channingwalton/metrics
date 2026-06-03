@@ -40,7 +40,8 @@ REPORTS_DIR="$(cd "$REPORTS_DIR" && pwd)"
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="$REPORTS_DIR/$STAMP"
-mkdir -p "$OUT"
+LOGDIR="$OUT/.logs"
+mkdir -p "$LOGDIR"
 ln -sfn "$OUT" "$REPORTS_DIR/latest"
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -51,20 +52,38 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 FAILED=()   # labels of sensors that ran but produced no valid output
 
-# keep FILE KIND LABEL OKMSG
-# Validate a sensor's output: keep it and print OKMSG if valid, otherwise delete
-# the (empty/corrupt) file, warn, and record the failure. KIND = json|xml|text.
+# errlog LABEL -> the stderr log path for a sensor (redirect its 2> here).
+errlog() { printf '%s/%s.err' "$LOGDIR" "$1"; }
+
+# keep FILE KIND LABEL OKMSG [RC]
+# Validate a sensor's output: keep it (+OKMSG) if valid, else delete the
+# empty/corrupt file, retain its stderr log, warn, and record the failure.
+# KIND = json|xml (validity = parses; non-zero rc from "findings" is fine) or
+# text (validity = the tool exited 0; an empty file is allowed). RC defaults 0.
+# Each sensor must redirect 2> "$(errlog LABEL)".
 keep() {
-  local file="$1" kind="$2" label="$3" okmsg="$4" valid=0
-  if [ -s "$file" ]; then
-    case "$kind" in
-      json) "$PY" -c 'import json,sys; json.load(open(sys.argv[1]))' "$file" 2>/dev/null && valid=1 ;;
-      xml)  "$PY" -c 'import xml.etree.ElementTree as ET,sys; ET.parse(sys.argv[1])' "$file" 2>/dev/null && valid=1 ;;
-      text) valid=1 ;;
-    esac
+  local file="$1" kind="$2" label="$3" okmsg="$4" rc="${5:-0}" log valid=0
+  log="$(errlog "$label")"
+  case "$kind" in
+    json) [ -s "$file" ] && "$PY" -c 'import json,sys; json.load(open(sys.argv[1]))' "$file" 2>/dev/null && valid=1 ;;
+    xml)  [ -s "$file" ] && "$PY" -c 'import xml.etree.ElementTree as ET,sys; ET.parse(sys.argv[1])' "$file" 2>/dev/null && valid=1 ;;
+    text) [ "$rc" = 0 ] && valid=1 ;;
+  esac
+  if [ "$valid" = 1 ]; then ok "$okmsg"; rm -f "$log"
+  else
+    rm -f "$file"
+    [ -s "$log" ] || echo "(no stderr captured)" > "$log"
+    warn "$label failed — see .logs/$label.err"
+    FAILED+=("$label")
   fi
-  if [ "$valid" = 1 ]; then ok "$okmsg"
-  else rm -f "$file"; warn "$label failed (no valid output)"; FAILED+=("$label"); fi
+}
+
+# record_fail LABEL : mark a non-keep sensor (e.g. rubycritic) as failed.
+record_fail() {
+  local label="$1" log; log="$(errlog "$label")"
+  [ -s "$log" ] || echo "(no stderr captured)" > "$log"
+  warn "$label failed — see .logs/$label.err"
+  FAILED+=("$label")
 }
 
 # Generated/vendored directories excluded from every sensor. Override with
@@ -92,16 +111,16 @@ say "Ignored: ${IGNORE_DIRS[*]}"
 
 # ---------------------------------------------------------------- polyglot ---
 if have scc; then
-  scc --format json --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' --output "$OUT/scc.json" "$TARGET" 2>/dev/null || true
+  scc --format json --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' --output "$OUT/scc.json" "$TARGET" 2> "$(errlog scc)" || true
   scc --exclude-dir "$SCC_EXCLUDE" -M '\.min\.js$' "$TARGET" > "$OUT/scc.txt" 2>/dev/null || true
   keep "$OUT/scc.json" json scc "scc.json (size/complexity/COCOMO)"
 else skip "scc (size/complexity)"; fi
 
 if have lizard; then
   # CSV: nloc,ccn,token,param,length,location,file,function,...
-  lizard "$TARGET" "${LIZARD_X[@]}" --csv > "$OUT/lizard.csv" 2>/dev/null || true
+  lizard "$TARGET" "${LIZARD_X[@]}" --csv > "$OUT/lizard.csv" 2> "$(errlog lizard)"; LZ_RC=$?
   lizard "$TARGET" "${LIZARD_X[@]}" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null || true
-  keep "$OUT/lizard.csv" text lizard "lizard.csv (per-function CCN)"
+  keep "$OUT/lizard.csv" text lizard "lizard.csv (per-function CCN)" "$LZ_RC"
 else skip "lizard (cyclomatic complexity)"; fi
 
 # dependency rules — custom YAML rules under config/ast-grep/rules
@@ -109,13 +128,13 @@ if have ast-grep; then
   if [ -f "$CONF/ast-grep/sgconfig.yml" ]; then
     # --json (array) always writes valid JSON ([] when clean), so we can tell a
     # genuine "no violations" apart from a tool failure.
-    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml "${AG_GLOBS[@]}" --json "$TARGET" > "$OUT/ast-grep.json" 2>/dev/null) || true
+    (cd "$CONF/ast-grep" && ast-grep scan --config sgconfig.yml "${AG_GLOBS[@]}" --json "$TARGET" > "$OUT/ast-grep.json" 2> "$(errlog ast-grep)") || true
     keep "$OUT/ast-grep.json" json ast-grep "ast-grep.json (dependency rules)"
   else skip "ast-grep (no sgconfig.yml)"; fi
 else skip "ast-grep (dependency rules)"; fi
 
 if have semgrep && [ -f "$CONF/semgrep/import-rules.yml" ]; then
-  semgrep --config "$CONF/semgrep/import-rules.yml" "${SG_EXCLUDE[@]}" --json --quiet "$TARGET" > "$OUT/semgrep.json" 2>/dev/null || true
+  semgrep --config "$CONF/semgrep/import-rules.yml" "${SG_EXCLUDE[@]}" --json --quiet "$TARGET" > "$OUT/semgrep.json" 2> "$(errlog semgrep)" || true
   keep "$OUT/semgrep.json" json semgrep "semgrep.json (dependency rules)"
 else skip "semgrep (dependency rules)"; fi
 
@@ -123,7 +142,7 @@ else skip "semgrep (dependency rules)"; fi
 if present -name '*.kt' -o -name '*.kts'; then
   if have detekt; then
     DKCFG=""; [ -f "$CONF/detekt/detekt.yml" ] && DKCFG="--config $CONF/detekt/detekt.yml --build-upon-default-config"
-    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2>&1 || true
+    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2> "$(errlog detekt)" || true
     keep "$OUT/detekt.xml" xml detekt "detekt.xml (Kotlin complexity/smells)"
   else skip "detekt (Kotlin present, tool missing)"; fi
 fi
@@ -136,9 +155,9 @@ if present -name '*.java'; then
     JAVA_LIST="$OUT/.java-files"
     find "$TARGET" -type f -name '*.java' "${FIND_PRUNE[@]}" > "$JAVA_LIST" 2>/dev/null || true
     if [ -s "$JAVA_LIST" ]; then
-      pmd check --file-list "$JAVA_LIST" -R "$PMDRULES" -f xml -r "$OUT/pmd.xml" >/dev/null 2>&1 || true
+      pmd check --file-list "$JAVA_LIST" -R "$PMDRULES" -f xml -r "$OUT/pmd.xml" >/dev/null 2> "$(errlog pmd)" || true
       keep "$OUT/pmd.xml" xml pmd "pmd.xml (Java rules)"
-      pmd cpd --file-list "$JAVA_LIST" --minimum-tokens 100 --language java --format xml > "$OUT/cpd.xml" 2>/dev/null || true
+      pmd cpd --file-list "$JAVA_LIST" --minimum-tokens 100 --language java --format xml > "$OUT/cpd.xml" 2> "$(errlog cpd)" || true
       keep "$OUT/cpd.xml" xml cpd "cpd.xml (Java duplication)"
     else skip "pmd/cpd (no Java files after exclusions)"; fi
     rm -f "$JAVA_LIST"
@@ -149,11 +168,11 @@ fi
 if present -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx'; then
   if have depcruise; then
     CFG=""; [ -f "$CONF/dependency-cruiser/.dependency-cruiser.cjs" ] && CFG="--config $CONF/dependency-cruiser/.dependency-cruiser.cjs"
-    depcruise $CFG --output-type json "$TARGET" > "$OUT/depcruise.json" 2>/dev/null || true
+    depcruise $CFG --output-type json "$TARGET" > "$OUT/depcruise.json" 2> "$(errlog dependency-cruiser)" || true
     keep "$OUT/depcruise.json" json dependency-cruiser "depcruise.json (TS/JS dependency rules + cycles)"
   else skip "dependency-cruiser (TS/JS present, tool missing)"; fi
   if have madge; then
-    madge --circular --json "$TARGET" > "$OUT/madge-circular.json" 2>/dev/null || true
+    madge --circular --json "$TARGET" > "$OUT/madge-circular.json" 2> "$(errlog madge)" || true
     keep "$OUT/madge-circular.json" json madge "madge-circular.json (cycles)"
   else skip "madge"; fi
 fi
@@ -161,7 +180,9 @@ fi
 # ------------------------------------------------------------------- Ruby ---
 if present -name '*.rb'; then
   if have rubycritic; then
-    rubycritic --no-browser -f json -p "$OUT/rubycritic" "$TARGET" >/dev/null 2>&1 && ok "rubycritic/ (Ruby complexity/churn/smells)"
+    if rubycritic --no-browser -f json -p "$OUT/rubycritic" "$TARGET" >/dev/null 2> "$(errlog rubycritic)"; then
+      ok "rubycritic/ (Ruby complexity/churn/smells)"; rm -f "$(errlog rubycritic)"
+    else record_fail rubycritic; fi
   else skip "rubycritic (Ruby present, tool missing)"; fi
 fi
 
@@ -172,12 +193,12 @@ if present -name '*.scala'; then
   if [ "$RUN_SBT" = "1" ] && [ -f "$TARGET/build.sbt" ] && have sbt; then
     say "Scala: running sbt (compiles — this can be slow)"
     # scapegoat: Scala 2.x only; harmless no-op / failure on Scala 3 (captured).
-    (cd "$TARGET" && sbt -batch -error scapegoat >/dev/null 2>&1) || true
+    (cd "$TARGET" && sbt -batch -error scapegoat > "$(errlog scapegoat)" 2>&1) || true
     SG="$(find "$TARGET" -path '*scapegoat-report/scapegoat.xml' -print -quit 2>/dev/null)"
-    if [ -n "$SG" ]; then cp "$SG" "$OUT/scapegoat.xml"; ok "scapegoat.xml (Scala inspections)"
+    if [ -n "$SG" ]; then cp "$SG" "$OUT/scapegoat.xml"; ok "scapegoat.xml (Scala inspections)"; rm -f "$(errlog scapegoat)"
     else skip "scapegoat (no report — Scala 3 or plugin not added; see docs)"; fi
     # scalafix: needs the sbt-scalafix plugin + a .scalafix.conf in the project.
-    if (cd "$TARGET" && sbt -batch -error "scalafixAll --check" > "$OUT/scalafix.txt" 2>&1); then
+    if (cd "$TARGET" && sbt -batch -error "scalafixAll --check" > "$OUT/scalafix.txt" 2>/dev/null); then
       ok "scalafix.txt (no rule violations)"
     elif [ -s "$OUT/scalafix.txt" ]; then ok "scalafix.txt (output captured)"
     else skip "scalafix (plugin/.scalafix.conf not set up; see docs)"; fi

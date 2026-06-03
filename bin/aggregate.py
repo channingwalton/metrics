@@ -476,10 +476,19 @@ def main():
     if failures.exists():
         failed = [ln.strip() for ln in failures.read_text().splitlines() if ln.strip()]
         if failed:
-            parts.append("## ⚠ Sensors that failed\n\n"
-                         "These tools ran but produced no valid output, so their "
-                         "results are **missing** from this report:\n\n"
-                         + "\n".join(f"- `{t}`" for t in failed) + "\n")
+            block = ["## ⚠ Sensors that failed\n",
+                     "These tools ran but produced no valid output, so their "
+                     "results are **missing** from this report:\n"]
+            for label in failed:
+                log = out / ".logs" / f"{label}.err"
+                reason = ""
+                if log.exists():
+                    lines = [ln for ln in log.read_text().splitlines() if ln.strip()]
+                    if lines:
+                        reason = "\n  ```\n" + "\n".join(
+                            "  " + ln for ln in lines[-8:]) + "\n  ```"
+                block.append(f"- **`{label}`** — see `.logs/{label}.err`{reason}")
+            parts.append("\n".join(block) + "\n")
     for fn in (
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
         scapegoat_section, scalafix_section, rubycritic_section,

@@ -61,8 +61,9 @@ current directory; override with `--reports DIR`) and updates `reports/latest/`.
 navigable detail; the rest are the raw per-tool reports. Files only appear when
 the matching tool ran. A sensor that runs but produces no valid output is
 dropped (not listed) and called out under a **Sensors that failed** heading in
-`summary.md`; if the summary itself can't be written, the run prints an error
-and exits non-zero.
+`summary.md`, which embeds the captured stderr so you can see why; the full log
+is kept at `.logs/<tool>.err`. If the summary itself can't be written, the run
+prints an error and exits non-zero.
 
 | File | What it is |
 |---|---|
