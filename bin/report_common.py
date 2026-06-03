@@ -28,6 +28,26 @@ def load_json(p):
         return None
 
 
+def _as_list(data, *keys):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in keys:
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _pick(d, *names, default=""):
+    if not isinstance(d, dict):
+        return default
+    for name in names:
+        if name in d and d[name] not in (None, ""):
+            return d[name]
+    return default
+
+
 def ast_grep_findings(out):
     """Return ast-grep finding dicts. Tolerant of both the `--json` array form
     and the older `--json=stream` (one object per line) form."""
@@ -55,6 +75,42 @@ def ast_grep_findings(out):
     return findings
 
 
+def shellcheck_findings(out):
+    return _as_list(load_json(Path(out) / "shellcheck.json"), "comments")
+
+
+def actionlint_findings(out):
+    return _as_list(load_json(Path(out) / "actionlint.json"), "errors")
+
+
+def hadolint_findings(out):
+    return _as_list(load_json(Path(out) / "hadolint.json"), "results")
+
+
+def ruff_findings(out):
+    return _as_list(load_json(Path(out) / "ruff.json"), "results")
+
+
+def checkov_findings(out):
+    """Return failed Checkov checks from either single-run or multi-run JSON."""
+    data = load_json(Path(out) / "checkov.json")
+    runs = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+    findings = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        results = run.get("results", {})
+        if isinstance(results, dict):
+            findings.extend(results.get("failed_checks", []) or [])
+        findings.extend(run.get("failed_checks", []) or [])
+    return findings
+
+
+def betterleaks_findings(out):
+    data = load_json(Path(out) / "betterleaks.json")
+    return _as_list(data, "findings", "Findings", "results", "Results", "leaks", "Leaks")
+
+
 def triggered_rules(out):
     """Distinct dependency-rule ids that fired -> (tool, description)."""
     out = Path(out)
@@ -71,4 +127,36 @@ def triggered_rules(out):
         for v in dc.get("summary", {}).get("violations", []):
             name = v.get("rule", {}).get("name", "?")
             rules.setdefault(name, ("dependency-cruiser", DEPCRUISE_DESC.get(name, "")))
+    return rules
+
+
+def triggered_check_rules(out):
+    """Distinct quality/security rule ids that fired -> (tool, description)."""
+    rules = {}
+
+    for f in shellcheck_findings(out):
+        code = _pick(f, "code")
+        rid = f"SC{code}" if code else "shellcheck"
+        rules.setdefault(rid, ("ShellCheck", _pick(f, "message")))
+
+    for f in actionlint_findings(out):
+        rid = _pick(f, "kind", "Kind", default="actionlint")
+        rules.setdefault(rid, ("actionlint", _pick(f, "message", "Message")))
+
+    for f in hadolint_findings(out):
+        rid = _pick(f, "code", "Code", default="hadolint")
+        rules.setdefault(rid, ("hadolint", _pick(f, "message", "Message")))
+
+    for f in ruff_findings(out):
+        rid = _pick(f, "code", "Code", default="ruff")
+        rules.setdefault(rid, ("Ruff", _pick(f, "message", "Message")))
+
+    for f in checkov_findings(out):
+        rid = _pick(f, "check_id", "checkId", default="checkov")
+        rules.setdefault(rid, ("Checkov", _pick(f, "check_name", "checkName", "message")))
+
+    for f in betterleaks_findings(out):
+        rid = _pick(f, "RuleID", "rule_id", "ruleId", "rule", default="betterleaks")
+        rules.setdefault(rid, ("Betterleaks", _pick(f, "Description", "description", "message")))
+
     return rules

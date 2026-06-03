@@ -19,6 +19,11 @@ these first; add per-language tools only where they buy real depth.
 |---|---|---|---|
 | **scc** | Metrics | LOC, comment ratio, an estimated complexity score, COCOMO cost, and DRYness/uniqueness — across ~250 languages, very fast, native JSON. | Best single "how big / how complex overall" sensor; trivial to run in CI. |
 | **lizard** | Metrics | *True* cyclomatic complexity (CCN) and token/parameter counts **per function**, with threshold warnings. Supports C/C++, Java, C#, JS, Python, Ruby, PHP, Swift, **Scala**, Go, Lua, Rust, TypeScript, and more. | The per-function complexity workhorse; flags hotspots scc's heuristic can't. (No Kotlin — use detekt there.) |
+| **ShellCheck** | Quality | Static analysis for shell scripts; catches quoting, portability, syntax, and semantic traps. | High signal for the glue scripts that run builds and agents. JSON output is easy to aggregate. |
+| **actionlint** | Quality / security | Static checker for GitHub Actions workflow files, including expression checks and unsafe workflow patterns. | CI config is code; workflow breakage blocks delivery and can create supply-chain risk. |
+| **hadolint** | Quality / security | Dockerfile linting with ShellCheck coverage for inline shell in `RUN` instructions. | Containers are common deployment glue, and Dockerfile mistakes often escape language linters. |
+| **checkov** | Security | IaC and workflow security checks for Terraform, Kubernetes, Dockerfile, GitHub Actions, and related formats. | Adds cloud/config posture checks without needing the target project to compile. |
+| **betterleaks** | Security | Secrets scanner for files, git, stdin, GitHub, GitLab, S3-compatible sources; supports JSON/SARIF output and CEL filters. | Better primary secrets sensor than Gitleaks now: same lineage, active development, richer filtering/validation. |
 | **ast-grep** | Dependency rules | Structural search/lint over tree-sitter ASTs; custom rules in YAML. Use it to express "no import of X from Y", banned APIs, layering checks — in *any* tree-sitter language. | The polyglot way to do architectural dependency rules without a per-language framework. Fast (Rust), JSON output. |
 | **semgrep** | Dependency rules | Same idea as ast-grep with a larger curated rule registry and ~30 languages; richer pattern logic (metavariables, taint). | Good alternative/complement to ast-grep for import-direction and forbidden-dependency rules; strong security overlap. |
 
@@ -68,6 +73,11 @@ cases cheaply; the JVM tools catch the structural ones precisely.
   numbers.
 - **checkstyle** — style + some size/complexity metrics.
 
+### Python
+- **Ruff** — fast Python linting, with Pyflakes, selected pycodestyle errors,
+  bugbear checks, and McCabe complexity. The scaffold keeps it focused on
+  correctness/maintainability and ignores formatting churn.
+
 ### Ruby
 - **flog** — ABC complexity per method (Ruby's de-facto complexity score).
 - **reek** — code smells (incl. coupling-related: feature envy, data clumps).
@@ -101,6 +111,7 @@ For any language not above, pick a tool from these and add a wrapper in
 | Complexity / size metric | scc, lizard | detekt, PMD, scalafix | flog, rubycritic | eslint `complexity`, scc |
 | Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | reek | dependency-cruiser metrics |
 | Dependency *rule* (forbidden edge / layering / no-cycle) | ast-grep, semgrep | ArchUnit, Konsist | packwerk | dependency-cruiser, madge |
+| Config / security hygiene | ShellCheck, actionlint, hadolint, checkov, betterleaks | SpotBugs / FindSecBugs (optional future) | brakeman (optional future) | eslint security plugins (optional future) |
 
 Treat each row/column cell as an independent sensor a coding agent can poll;
 the scaffold's `summary.md` is the aggregated read-out.

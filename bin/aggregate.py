@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from report_common import (
-    CCN_WARN, ast_grep_findings, load_json, triggered_rules,
+    CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
+    checkov_findings, hadolint_findings, load_json, ruff_findings,
+    shellcheck_findings, triggered_check_rules, triggered_rules,
 )
 
 
@@ -124,6 +126,33 @@ def detekt_section(out: Path) -> str:
 
 
 CSV_NOTE = "\n_Per-violation file:line locations are in `findings.csv`._"
+
+
+def pick(d, *names, default=""):
+    if not isinstance(d, dict):
+        return default
+    for name in names:
+        if name in d and d[name] not in (None, ""):
+            return d[name]
+    return default
+
+
+def count_findings_section(out: Path, title: str, filename: str, findings, rule_fn,
+                           no_msg: str) -> str:
+    if not (out / filename).exists():
+        return ""
+    if not findings:
+        return f"## {title}\n\n- {no_msg}\n"
+    by_rule = Counter(rule_fn(f) or "?" for f in findings)
+    lines = [
+        f"## {title}\n",
+        f"- **{len(findings)} finding(s)** — top rules:\n",
+        "\n| Rule | Count |", "|---|--:|",
+    ]
+    for rule, n in by_rule.most_common(10):
+        lines.append(f"| {rule} | {n} |")
+    lines.append(CSV_NOTE)
+    return "\n".join(lines) + "\n"
 
 
 def pmd_section(out: Path) -> str:
@@ -238,6 +267,47 @@ def rubycritic_section(out: Path) -> str:
             f"{m.get('churn','?')} | {m.get('path') or m.get('name','?')} |"
         )
     return "\n".join(lines) + "\n"
+
+
+def shellcheck_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Shell scripts (ShellCheck)", "shellcheck.json", shellcheck_findings(out),
+        lambda f: f"SC{pick(f, 'code')}", "No shell issues.")
+
+
+def actionlint_section(out: Path) -> str:
+    return count_findings_section(
+        out, "GitHub Actions (actionlint)", "actionlint.json", actionlint_findings(out),
+        lambda f: pick(f, "kind", "Kind", default="actionlint"),
+        "No workflow issues.")
+
+
+def hadolint_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Dockerfiles (hadolint)", "hadolint.json", hadolint_findings(out),
+        lambda f: pick(f, "code", "Code", default="hadolint"),
+        "No Dockerfile issues.")
+
+
+def ruff_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Python quality (Ruff)", "ruff.json", ruff_findings(out),
+        lambda f: pick(f, "code", "Code", default="ruff"),
+        "No Python lint findings.")
+
+
+def checkov_section(out: Path) -> str:
+    return count_findings_section(
+        out, "IaC security (Checkov)", "checkov.json", checkov_findings(out),
+        lambda f: pick(f, "check_id", "checkId", default="checkov"),
+        "No failed IaC checks.")
+
+
+def betterleaks_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Secrets (Betterleaks)", "betterleaks.json", betterleaks_findings(out),
+        lambda f: pick(f, "RuleID", "rule_id", "ruleId", "rule", default="betterleaks"),
+        "No secrets found.")
 
 
 # ----------------------------------------------------- dependency rules ---
@@ -359,6 +429,54 @@ def write_findings_csv(out: Path) -> int:
                                  v.get("rule", "?"), fl.get("name", "?"),
                                  v.get("beginline", ""), (v.text or "").strip()))
 
+    # shellcheck
+    for f in shellcheck_findings(out):
+        rows.append(("quality", "shellcheck", pick(f, "level"),
+                     f"SC{pick(f, 'code')}", pick(f, "file"),
+                     pick(f, "line"), pick(f, "message")))
+
+    # actionlint
+    for f in actionlint_findings(out):
+        rows.append(("quality", "actionlint", "error",
+                     pick(f, "kind", "Kind", default="actionlint"),
+                     pick(f, "filepath", "Filepath", "file", "File"),
+                     pick(f, "line", "Line"), pick(f, "message", "Message")))
+
+    # hadolint
+    for f in hadolint_findings(out):
+        rows.append(("quality", "hadolint", pick(f, "level", "Level"),
+                     pick(f, "code", "Code", default="hadolint"),
+                     pick(f, "file", "File"), pick(f, "line", "Line"),
+                     pick(f, "message", "Message")))
+
+    # ruff
+    for f in ruff_findings(out):
+        loc = pick(f, "location", default={})
+        line = pick(loc, "row", "line") if isinstance(loc, dict) else ""
+        rows.append(("quality", "ruff", "",
+                     pick(f, "code", "Code", default="ruff"),
+                     pick(f, "filename", "file"), line,
+                     pick(f, "message", "Message")))
+
+    # checkov
+    for f in checkov_findings(out):
+        rng = pick(f, "file_line_range", "fileLineRange", default=[])
+        line = rng[0] if isinstance(rng, list) and rng else pick(f, "line")
+        rows.append(("security", "checkov", pick(f, "severity", "Severity"),
+                     pick(f, "check_id", "checkId", default="checkov"),
+                     pick(f, "file_path", "filePath", "file"),
+                     line, pick(f, "check_name", "checkName", "message")))
+
+    # betterleaks
+    for f in betterleaks_findings(out):
+        validation = pick(f, "Validation", "validation", default={})
+        result = pick(validation, "result") if isinstance(validation, dict) else ""
+        rows.append(("security", "betterleaks", result,
+                     pick(f, "RuleID", "rule_id", "ruleId", "rule", default="betterleaks"),
+                     pick(f, "File", "file", "path"),
+                     pick(f, "StartLine", "start_line", "line"),
+                     pick(f, "Description", "description", "message")))
+
     # cpd duplication — one row per location, sharing a block id
     root = xml_root("cpd.xml")
     if root is not None:
@@ -459,6 +577,16 @@ def legend_section(out: Path) -> str:
             tool, desc = fired[rid]
             lines.append(f"| `{rid}` | {tool} | {desc} |")
 
+    checks = triggered_check_rules(out)
+    if checks:
+        lines += [
+            "\n**Quality/security check codes triggered in this report:**\n",
+            "| Code | Tool | Meaning |", "|---|---|---|",
+        ]
+        for rid in sorted(checks):
+            tool, desc = checks[rid]
+            lines.append(f"| `{rid}` | {tool} | {desc} |")
+
     lines.append("\n_Full glossary: `docs/TOOLS.md` § Appendix._")
     return "\n".join(lines) + "\n"
 
@@ -492,6 +620,8 @@ def main():
     for fn in (
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
         scapegoat_section, scalafix_section, rubycritic_section,
+        shellcheck_section, actionlint_section, hadolint_section, ruff_section,
+        checkov_section, betterleaks_section,
         ast_grep_section, semgrep_section, depcruise_section, madge_section,
     ):
         try:
@@ -526,6 +656,12 @@ def main():
         "detekt.xml": "full detekt findings",
         "scapegoat.xml": "full scapegoat warnings",
         "scalafix.txt": "scalafix output",
+        "shellcheck.json": "shell script findings",
+        "actionlint.json": "GitHub Actions workflow findings",
+        "hadolint.json": "Dockerfile findings",
+        "ruff.json": "Python lint findings",
+        "checkov.json": "IaC security findings",
+        "betterleaks.json": "secret scanning findings",
         "ast-grep.json": "dependency-rule violations",
         "semgrep.json": "dependency-rule / quality matches",
         "depcruise.json": "dependency-cruiser violations",

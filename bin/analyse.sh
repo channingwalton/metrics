@@ -92,12 +92,15 @@ IFS=' ' read -r -a IGNORE_DIRS <<< "${EXCLUDE_DIRS:-node_modules .git build dist
 
 # Build the per-tool exclude arguments from IGNORE_DIRS (+ minified files).
 FIND_PRUNE=(); SCC_EXCLUDE=""; LIZARD_X=(-x "*.min.js"); AG_GLOBS=(--globs '!**/*.min.js'); SG_EXCLUDE=(--exclude '*.min.js')
+RUFF_EXCLUDE=(); CHECKOV_SKIP=()
 for d in "${IGNORE_DIRS[@]}"; do
   FIND_PRUNE+=( -not -path "*/$d/*" )
   SCC_EXCLUDE="${SCC_EXCLUDE:+$SCC_EXCLUDE,}$d"
   LIZARD_X+=( -x "*/$d/*" )
   AG_GLOBS+=( --globs "!**/$d/**" )
   SG_EXCLUDE+=( --exclude "$d" )
+  RUFF_EXCLUDE+=( --exclude "$d" )
+  CHECKOV_SKIP+=( --skip-path "$d" )
 done
 DETEKT_EXC="$(printf '**/%s/**,' "${IGNORE_DIRS[@]}")"; DETEKT_EXC="${DETEKT_EXC%,}"
 
@@ -122,6 +125,67 @@ if have lizard; then
   lizard "$TARGET" "${LIZARD_X[@]}" --warnings_only > "$OUT/lizard-warnings.txt" 2>/dev/null || true
   keep "$OUT/lizard.csv" text lizard "lizard.csv (per-function CCN)" "$LZ_RC"
 else skip "lizard (cyclomatic complexity)"; fi
+
+# shell scripts
+if present -name '*.sh' -o -name '*.bash' -o -name '*.bats'; then
+  if have shellcheck; then
+    SH_LIST="$OUT/.shell-files"
+    find "$TARGET" -type f \( -name '*.sh' -o -name '*.bash' -o -name '*.bats' \) "${FIND_PRUNE[@]}" > "$SH_LIST" 2>/dev/null || true
+    if [ -s "$SH_LIST" ]; then
+      SH_FILES=()
+      while IFS= read -r f; do SH_FILES+=( "$f" ); done < "$SH_LIST"
+      shellcheck --format=json "${SH_FILES[@]}" > "$OUT/shellcheck.json" 2> "$(errlog shellcheck)" || true
+      keep "$OUT/shellcheck.json" json shellcheck "shellcheck.json (shell script findings)"
+    else skip "shellcheck (no shell files after exclusions)"; fi
+    rm -f "$SH_LIST"
+  else skip "shellcheck (shell scripts present, tool missing)"; fi
+fi
+
+# GitHub Actions workflows
+if present -path '*/.github/workflows/*.yml' -o -path '*/.github/workflows/*.yaml'; then
+  if have actionlint; then
+    (cd "$TARGET" && actionlint -format '{{json .}}' > "$OUT/actionlint.json" 2> "$(errlog actionlint)") || true
+    keep "$OUT/actionlint.json" json actionlint "actionlint.json (GitHub Actions workflows)"
+  else skip "actionlint (GitHub Actions workflows present, tool missing)"; fi
+fi
+
+# Dockerfiles
+if present -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' -o -iname '*.dockerfile'; then
+  if have hadolint; then
+    DOCKER_LIST="$OUT/.dockerfiles"
+    find "$TARGET" -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' -o -iname '*.dockerfile' \) "${FIND_PRUNE[@]}" > "$DOCKER_LIST" 2>/dev/null || true
+    if [ -s "$DOCKER_LIST" ]; then
+      DOCKER_FILES=()
+      while IFS= read -r f; do DOCKER_FILES+=( "$f" ); done < "$DOCKER_LIST"
+      hadolint --format json "${DOCKER_FILES[@]}" > "$OUT/hadolint.json" 2> "$(errlog hadolint)" || true
+      keep "$OUT/hadolint.json" json hadolint "hadolint.json (Dockerfile findings)"
+    else skip "hadolint (no Dockerfiles after exclusions)"; fi
+    rm -f "$DOCKER_LIST"
+  else skip "hadolint (Dockerfiles present, tool missing)"; fi
+fi
+
+# Python lint
+if present -name '*.py'; then
+  if have ruff; then
+    RUFFCFG=(); [ -f "$CONF/ruff/ruff.toml" ] && RUFFCFG=(--config "$CONF/ruff/ruff.toml")
+    ruff check --output-format json "${RUFFCFG[@]}" "${RUFF_EXCLUDE[@]}" "$TARGET" > "$OUT/ruff.json" 2> "$(errlog ruff)" || true
+    keep "$OUT/ruff.json" json ruff "ruff.json (Python lint findings)"
+  else skip "ruff (Python present, tool missing)"; fi
+fi
+
+# IaC / workflow security
+if present -name '*.tf' -o -name '*.tf.json' -o -name '*.bicep' -o -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' -o -iname '*.dockerfile' -o -name 'Chart.yaml' -o -iname 'kustomization.yaml' -o -name 'serverless.yml' -o -name 'serverless.yaml' -o -path '*/.github/workflows/*.yml' -o -path '*/.github/workflows/*.yaml'; then
+  if have checkov; then
+    checkov --directory "$TARGET" --output json --quiet "${CHECKOV_SKIP[@]}" > "$OUT/checkov.json" 2> "$(errlog checkov)" || true
+    keep "$OUT/checkov.json" json checkov "checkov.json (IaC security findings)"
+  else skip "checkov (IaC/workflow files present, tool missing)"; fi
+fi
+
+# secrets
+if have betterleaks; then
+  betterleaks dir "$TARGET" --max-target-megabytes 20 --report-path "$OUT/betterleaks.json" --report-format json --exit-code 0 > /dev/null 2> "$(errlog betterleaks)" || true
+  keep "$OUT/betterleaks.json" json betterleaks "betterleaks.json (secret scanning findings)"
+else skip "betterleaks (secret scanning)"; fi
 
 # dependency rules — custom YAML rules under config/ast-grep/rules
 if have ast-grep; then

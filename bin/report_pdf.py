@@ -27,7 +27,11 @@ from reportlab.platypus import (
     Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
-from report_common import CCN_WARN, ast_grep_findings, load_json, triggered_rules
+from report_common import (
+    CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
+    checkov_findings, hadolint_findings, load_json, ruff_findings,
+    shellcheck_findings, triggered_check_rules, triggered_rules,
+)
 
 INK = "#1f2933"
 ACCENT = "#2f6f8f"
@@ -79,6 +83,22 @@ def _short(path, n=3):
     return "/".join(parts[-n:]) if len(parts) > n else str(path)
 
 
+def pick(d, *names, default=""):
+    if not isinstance(d, dict):
+        return default
+    for name in names:
+        if name in d and d[name] not in (None, ""):
+            return d[name]
+    return default
+
+
+def count_json_rules(findings, *keys, default="?"):
+    c = Counter()
+    for f in findings:
+        c[pick(f, *keys, default=default)] += 1
+    return c
+
+
 def read_ast_grep(out):
     return [(d.get("ruleId", "?"), _short(d.get("file", "?")),
              d.get("range", {}).get("start", {}).get("line", "?"))
@@ -124,6 +144,47 @@ def _count_xml(out, fname, tag, attr):
     return c
 
 
+def read_failures(out):
+    p = out / ".failures"
+    if not p.exists():
+        return []
+    rows = []
+    for label in p.read_text().splitlines():
+        label = label.strip()
+        if not label:
+            continue
+        log = out / ".logs" / f"{label}.err"
+        reason = ""
+        if log.exists():
+            lines = [ln.strip() for ln in log.read_text().splitlines() if ln.strip()]
+            reason = " ".join(lines[-2:])
+        rows.append((label, reason or f"See .logs/{label}.err"))
+    return rows
+
+
+def read_cpd(out):
+    p = out / "cpd.xml"
+    if not p.exists():
+        return None
+    try:
+        root = ET.parse(p).getroot()
+    except Exception:
+        return None
+    dups = [el for el in root.iter() if el.tag.endswith("duplication")]
+    return len(dups), sum(int(d.get("lines", 0)) for d in dups)
+
+
+def read_findings_count(out):
+    p = out / "findings.csv"
+    if not p.exists():
+        return None
+    try:
+        with p.open(newline="") as f:
+            return max(0, sum(1 for _ in csv.reader(f)) - 1)
+    except Exception:
+        return None
+
+
 def read_detekt(out):
     return _count_xml(out, "detekt.xml", "error", "source")
 
@@ -150,6 +211,36 @@ def read_rubycritic(out):
     return [(m.get("rating", "?"), m.get("complexity", "?"),
              m.get("churn", "?"), _short(m.get("path") or m.get("name", "?")))
             for m in mods]
+
+
+def read_shellcheck(out):
+    c = Counter()
+    for f in shellcheck_findings(out):
+        code = pick(f, "code", default="shellcheck")
+        c[f"SC{code}" if code != "shellcheck" else code] += 1
+    return c
+
+
+def read_actionlint(out):
+    return count_json_rules(actionlint_findings(out), "kind", "Kind", default="actionlint")
+
+
+def read_hadolint(out):
+    return count_json_rules(hadolint_findings(out), "code", "Code", default="hadolint")
+
+
+def read_ruff(out):
+    return count_json_rules(ruff_findings(out), "code", "Code", default="ruff")
+
+
+def read_checkov(out):
+    return count_json_rules(checkov_findings(out), "check_id", "checkId", default="checkov")
+
+
+def read_betterleaks(out):
+    return count_json_rules(
+        betterleaks_findings(out), "RuleID", "rule_id", "ruleId", "rule",
+        default="betterleaks")
 
 
 def count_dep_violations(out):
@@ -233,6 +324,8 @@ def build(out: Path, target: str):
     langs, files, loc = read_scc(out)
     rows = read_lizard(out)
     deps = count_dep_violations(out)
+    failures = read_failures(out)
+    all_findings = read_findings_count(out)
 
     imgdir = out / ".charts"
     imgdir.mkdir(exist_ok=True)
@@ -327,6 +420,17 @@ def build(out: Path, target: str):
                 tt.setStyle(TableStyle([("TEXTCOLOR", (0, i), (0, i), colors.HexColor(WARN))]))
         story.append(tt)
 
+    cpd = read_cpd(out)
+    if cpd is not None:
+        story += [Spacer(1, 0.5 * cm), Paragraph("Duplication", h2)]
+        blocks, lines = cpd
+        if blocks:
+            story.append(Paragraph(
+                f"<b>{blocks}</b> duplicate block(s), <b>{lines}</b> lines total. "
+                "Full locations are in findings.csv.", meta))
+        else:
+            story.append(Paragraph("No duplicate blocks over threshold.", meta))
+
     # styles shared by finding tables
     cellp = ParagraphStyle("cellp", parent=styles["Normal"], fontSize=8, leading=10)
 
@@ -342,6 +446,12 @@ def build(out: Path, target: str):
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         return tbl
+
+    if failures:
+        story += [Spacer(1, 0.5 * cm), Paragraph("Sensors that failed", h2)]
+        frows = [(label, reason) for label, reason in failures]
+        story += [finding_table(["Sensor", "Last log lines"], frows,
+                                [4 * cm, 13 * cm])]
 
     # --- dependency-rule findings (summary; detail in findings.csv) ---------
     ag = read_ast_grep(out)
@@ -370,24 +480,50 @@ def build(out: Path, target: str):
 
     # --- code-quality findings ----------------------------------------------
     detekt, pmd, scape = read_detekt(out), read_pmd(out), read_scapegoat(out)
+    shell, actions, docker = read_shellcheck(out), read_actionlint(out), read_hadolint(out)
+    ruff, checkov, secrets = read_ruff(out), read_checkov(out), read_betterleaks(out)
     ruby = read_rubycritic(out)
     quality_blocks = []
     for title, counts in (("Kotlin (detekt)", detekt), ("Java (PMD)", pmd),
-                          ("Scala (scapegoat)", scape)):
+                          ("Scala (scapegoat)", scape),
+                          ("Shell (ShellCheck)", shell),
+                          ("GitHub Actions (actionlint)", actions),
+                          ("Dockerfiles (hadolint)", docker),
+                          ("Python (Ruff)", ruff),
+                          ("IaC security (Checkov)", checkov),
+                          ("Secrets (Betterleaks)", secrets)):
         if counts:
             quality_blocks.append((title,
                 finding_table(["Rule", "Count"],
                               [(k, v) for k, v in counts.most_common(12)],
                               [13 * cm, 4 * cm])))
+        elif {
+            "Kotlin (detekt)": "detekt.xml",
+            "Java (PMD)": "pmd.xml",
+            "Scala (scapegoat)": "scapegoat.xml",
+            "Shell (ShellCheck)": "shellcheck.json",
+            "GitHub Actions (actionlint)": "actionlint.json",
+            "Dockerfiles (hadolint)": "hadolint.json",
+            "Python (Ruff)": "ruff.json",
+            "IaC security (Checkov)": "checkov.json",
+            "Secrets (Betterleaks)": "betterleaks.json",
+        }[title] in {p.name for p in out.iterdir()}:
+            quality_blocks.append((title, Paragraph("No findings.", meta)))
     if ruby:
         quality_blocks.append(("Ruby (rubycritic)",
             finding_table(["Rating", "Complexity", "Churn", "File"], ruby[:12],
                           [2 * cm, 2.5 * cm, 2 * cm, 10.5 * cm])))
     if quality_blocks:
-        story += [Spacer(1, 0.5 * cm), Paragraph("Code-quality findings", h2)]
-        for title, tbl in quality_blocks:
+        story += [Spacer(1, 0.5 * cm), Paragraph("Quality and security findings", h2)]
+        for title, block in quality_blocks:
             story += [Spacer(1, 0.15 * cm),
-                      Paragraph(f"<b>{title}</b>", cellp), tbl]
+                      Paragraph(f"<b>{title}</b>", cellp), block]
+
+    if all_findings is not None:
+        story += [Spacer(1, 0.5 * cm), Paragraph("All findings", h2),
+                  Paragraph(
+                      f"<b>{all_findings}</b> machine-readable finding(s) in "
+                      "findings.csv.", meta)]
 
     # legend
     story += [Spacer(1, 0.5 * cm), Paragraph("Legend", h2)]
@@ -433,6 +569,26 @@ def build(out: Path, target: str):
         ]))
         story.append(rt)
 
+    checks = triggered_check_rules(out)
+    if checks:
+        story += [Spacer(1, 0.3 * cm),
+                  Paragraph("<b>Quality/security check codes triggered in this report</b>",
+                            cellp)]
+        crows = [[Paragraph(f"<b>{rid}</b>", cellp), Paragraph(tool, cellp),
+                  Paragraph(desc, cellp)]
+                 for rid, (tool, desc) in sorted(checks.items())]
+        ct = Table([[Paragraph("<b>Code</b>", cellp), Paragraph("<b>Tool</b>", cellp),
+                     Paragraph("<b>Meaning</b>", cellp)]] + crows,
+                   colWidths=[4.5 * cm, 3 * cm, 9.5 * cm])
+        ct.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(ACCENT)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor(GRID)),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(ct)
+
     # --- reports reference --------------------------------------------------
     story += [Spacer(1, 0.5 * cm), Paragraph("Reports", h2),
               Paragraph("This PDF is a summary. Full, navigable detail is in the "
@@ -446,6 +602,12 @@ def build(out: Path, target: str):
         "cpd.xml": "Duplicate code blocks with the duplicated fragments.",
         "detekt.xml": "Full detekt findings.",
         "scapegoat.xml": "Full scapegoat warnings.",
+        "shellcheck.json": "Shell script findings.",
+        "actionlint.json": "GitHub Actions workflow findings.",
+        "hadolint.json": "Dockerfile findings.",
+        "ruff.json": "Python lint findings.",
+        "checkov.json": "IaC security findings.",
+        "betterleaks.json": "Secret scanning findings.",
         "ast-grep.json": "Dependency-rule violations.",
         "semgrep.json": "Dependency-rule / quality matches.",
         "depcruise.json": "Dependency-cruiser violations.",

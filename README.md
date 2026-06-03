@@ -73,6 +73,12 @@ prints an error and exits non-zero.
 | `scc.json` / `scc.txt` | Per-language size & complexity |
 | `lizard.csv` | Per-function cyclomatic complexity |
 | `lizard-warnings.txt` | Functions over the complexity threshold |
+| `shellcheck.json` | Shell script findings |
+| `actionlint.json` | GitHub Actions workflow findings |
+| `hadolint.json` | Dockerfile findings |
+| `ruff.json` | Python lint findings |
+| `checkov.json` | IaC / workflow security findings |
+| `betterleaks.json` | Secret scanning findings |
 | `ast-grep.json` | Dependency-rule violations (custom rules) |
 | `semgrep.json` | Dependency-rule / quality matches |
 | `detekt.xml` | Kotlin complexity & smell findings |
@@ -88,6 +94,12 @@ prints an error and exits non-zero.
 |---|---|---|---|
 | Size / complexity / DRYness | `scc` | ~250 languages | `scc.json` |
 | Cyclomatic complexity per function | `lizard` | C/C++, Java, Scala, Ruby, JS/TS, Go, Rust, Swift, … | `lizard.csv` |
+| Shell correctness | `shellcheck` | sh, bash, ksh | `shellcheck.json` |
+| Workflow correctness | `actionlint` | GitHub Actions YAML | `actionlint.json` |
+| Dockerfile correctness | `hadolint` | Dockerfile | `hadolint.json` |
+| Python correctness / complexity | `ruff` | Python | `ruff.json` |
+| IaC / workflow security | `checkov` | Terraform, Kubernetes, Dockerfile, GitHub Actions, etc. | `checkov.json` |
+| Secret scanning | `betterleaks` | Any text repo | `betterleaks.json` |
 | Dependency rules (custom) | `ast-grep` | tree-sitter languages | `ast-grep.json` |
 | Dependency rules (custom, alt) | `semgrep` | ~30 languages | `semgrep.json` |
 | Complexity / smells | `detekt` | Kotlin | `detekt.xml` |
@@ -105,7 +117,7 @@ Konsist for Kotlin, packwerk for Ruby) ship as **example configs** under
 ```
 bin/        install.sh, analyse.sh, aggregate.py
 config/     rule configs per tool (ast-grep, dependency-cruiser, semgrep,
-            detekt, pmd, archunit, konsist, packwerk)
+            ruff, detekt, pmd, archunit, konsist, packwerk)
 docs/       TOOLS.md — recommendation & comparison
 reports/    generated output (git-ignored)
 ```
@@ -126,8 +138,13 @@ Two kinds of config live here:
 | `ast-grep/rules/quality.yml` | ast-grep | high-confidence checks: no focused tests, no stray `console.log`/`println`, no `printStackTrace` |
 | `semgrep/import-rules.yml` | semgrep | layering rules + empty-catch / focused-test / raw-SQL-in-controller checks |
 | `dependency-cruiser/.dependency-cruiser.cjs` | dependency-cruiser | no cycles, no orphans, no dev-dep/test leakage into prod, domain↛infra |
+| `ruff/ruff.toml` | Ruff | Python correctness rules + McCabe complexity 15 |
 | `detekt/detekt.yml` | detekt | Kotlin complexity thresholds (CCN/cognitive 15, long method/params), applied with `--build-upon-default-config` |
 | `pmd/ruleset.xml` | PMD | Java quickstart minus the noisiest rules, complexity pinned to CCN 15 |
+
+Also run automatically, without project-local config: ShellCheck, actionlint,
+hadolint, Checkov, and Betterleaks. Betterleaks scans the current filesystem
+state with its built-in rules; validation is not enabled by default.
 
 **Build-integrated examples** (copy into your project's test suite/app — they
 need compilation or a package layout, so `analyse.sh` does not run them):

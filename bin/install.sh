@@ -36,6 +36,24 @@ else
 fi
 have lizard || pip_install lizard || pipx install lizard
 
+say "General quality/security: shellcheck, actionlint, hadolint, ruff, checkov, betterleaks"
+if [ "$OS" = "Darwin" ] && have brew; then
+  brew_install shellcheck || warn "brew install shellcheck failed"
+  brew_install actionlint || warn "brew install actionlint failed"
+  brew_install hadolint || warn "brew install hadolint failed"
+  brew_install ruff || warn "brew install ruff failed"
+  brew_install checkov || warn "brew install checkov failed"
+  brew_install betterleaks || brew install betterleaks/tap/betterleaks || warn "brew install betterleaks failed"
+else
+  warn "Non-macOS or no Homebrew: install shellcheck, actionlint, hadolint, betterleaks manually."
+  warn "  shellcheck: https://github.com/koalaman/shellcheck"
+  warn "  actionlint: https://github.com/rhysd/actionlint"
+  warn "  hadolint:   https://github.com/hadolint/hadolint"
+  warn "  betterleaks: https://github.com/betterleaks/betterleaks"
+  have ruff || pip_install ruff || true
+  have checkov || pip_install checkov || true
+fi
+
 say "PDF report deps: matplotlib, reportlab"
 "$PY" -c 'import matplotlib, reportlab' 2>/dev/null || \
   pip_install matplotlib reportlab || \
@@ -68,7 +86,7 @@ fi
 
 say "Done. Run: bin/analyse.sh /path/to/repo"
 printf '\nInstalled:\n'
-for t in scc lizard ast-grep semgrep detekt pmd depcruise madge rubycritic packwerk; do
+for t in scc lizard ast-grep semgrep shellcheck actionlint hadolint ruff checkov betterleaks detekt pmd depcruise madge rubycritic packwerk; do
   if have "$t"; then printf '  \033[1;32m✓\033[0m %s\n' "$t"; else printf '  \033[1;31m✗\033[0m %s\n' "$t"; fi
 done
 for m in matplotlib reportlab; do
