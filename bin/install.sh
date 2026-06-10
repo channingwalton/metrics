@@ -36,6 +36,16 @@ else
 fi
 have lizard || pip_install lizard || pipx install lizard
 
+say "Supply chain: osv-scanner, syft"
+if [ "$OS" = "Darwin" ] && have brew; then
+  brew_install osv-scanner || warn "brew install osv-scanner failed"
+  brew_install syft || warn "brew install syft failed"
+else
+  warn "Non-macOS or no Homebrew: install osv-scanner and syft manually."
+  warn "  osv-scanner: https://google.github.io/osv-scanner/installation/"
+  warn "  syft:        https://github.com/anchore/syft"
+fi
+
 say "General quality/security: shellcheck, actionlint, hadolint, ruff, checkov, betterleaks"
 if [ "$OS" = "Darwin" ] && have brew; then
   brew_install shellcheck || warn "brew install shellcheck failed"
@@ -65,9 +75,13 @@ if [ "$OS" = "Darwin" ] && have brew; then brew_install detekt; else
   warn "Install detekt-cli: https://detekt.dev/docs/gettingstarted/cli"
 fi
 
-say "Java/JVM: pmd (includes cpd)"
-if [ "$OS" = "Darwin" ] && have brew; then brew_install pmd; else
+say "Java/JVM: pmd (includes cpd), spotbugs"
+if [ "$OS" = "Darwin" ] && have brew; then
+  brew_install pmd
+  brew_install spotbugs
+else
   warn "Install PMD: https://pmd.github.io  (brew install pmd / sdkman)"
+  warn "Install SpotBugs: https://spotbugs.github.io/"
 fi
 
 say "TS/JS: dependency-cruiser, madge"
@@ -77,16 +91,17 @@ else
   warn "npm not found; skipping dependency-cruiser & madge"
 fi
 
-say "Ruby: rubycritic (flog, reek, flay), packwerk"
+say "Ruby: rubycritic (flog, reek, flay), packwerk, brakeman"
 if have gem; then
-  gem install rubycritic packwerk >/dev/null 2>&1 || warn "gem install failed (may need sudo)"
+  gem install rubycritic packwerk brakeman >/dev/null 2>&1 || warn "gem install failed (may need sudo)"
 else
   warn "gem not found; skipping Ruby tools"
+  warn "Install Brakeman manually: https://brakemanscanner.org/docs/install/"
 fi
 
 say "Done. Run: bin/analyse.sh /path/to/repo"
 printf '\nInstalled:\n'
-for t in scc lizard ast-grep semgrep shellcheck actionlint hadolint ruff checkov betterleaks detekt pmd depcruise madge rubycritic packwerk; do
+for t in scc lizard ast-grep semgrep osv-scanner syft shellcheck actionlint hadolint ruff checkov betterleaks detekt pmd spotbugs depcruise madge rubycritic packwerk brakeman; do
   if have "$t"; then printf '  \033[1;32m✓\033[0m %s\n' "$t"; else printf '  \033[1;31m✗\033[0m %s\n' "$t"; fi
 done
 for m in matplotlib reportlab; do

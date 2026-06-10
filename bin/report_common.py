@@ -4,6 +4,7 @@ Imported by aggregate.py (markdown/CSV) and report_pdf.py (PDF) so the report
 parsing lives in one place.
 """
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 CCN_WARN = 15  # cyclomatic-complexity threshold for a "hotspot"
@@ -111,6 +112,100 @@ def betterleaks_findings(out):
     return _as_list(data, "findings", "Findings", "results", "Results", "leaks", "Leaks")
 
 
+def syft_packages(out):
+    data = load_json(Path(out) / "syft.json")
+    return _as_list(data, "artifacts", "packages", "components")
+
+
+def _osv_vuln_severity(vuln):
+    severity = _pick(vuln, "severity", default=[])
+    if isinstance(severity, list):
+        for item in severity:
+            if isinstance(item, dict) and item.get("score"):
+                return item.get("score")
+    db = _pick(vuln, "database_specific", default={})
+    if isinstance(db, dict):
+        return _pick(db, "severity")
+    return _pick(vuln, "severity")
+
+
+def _osv_group_finding(source, package, ids, vuln):
+    name = _pick(package, "name", default="?")
+    version = _pick(package, "version")
+    ecosystem = _pick(package, "ecosystem")
+    primary = ids[0] if ids else _pick(vuln, "id", default="osv")
+    summary = _pick(vuln, "summary", "details")
+    return {
+        "id": primary,
+        "ids": ids or [primary],
+        "package": name,
+        "version": version,
+        "ecosystem": ecosystem,
+        "source": source,
+        "severity": _osv_vuln_severity(vuln),
+        "message": summary,
+    }
+
+
+def osv_findings(out):
+    data = load_json(Path(out) / "osv-scanner.json")
+    findings = []
+    for result in _as_list(data, "results"):
+        if not isinstance(result, dict):
+            continue
+        source = _pick(_pick(result, "source", default={}), "path")
+        for entry in _as_list(result.get("packages", [])):
+            if not isinstance(entry, dict):
+                continue
+            package = _pick(entry, "package", default={})
+            vulns = _as_list(entry.get("vulnerabilities", []))
+            by_id = {v.get("id"): v for v in vulns if isinstance(v, dict) and v.get("id")}
+            groups = _as_list(entry.get("groups", []))
+            if groups:
+                for group in groups:
+                    ids = group.get("ids", []) if isinstance(group, dict) else []
+                    vuln = next((by_id[i] for i in ids if i in by_id), {})
+                    findings.append(_osv_group_finding(source, package, ids, vuln))
+            else:
+                for vuln in vulns:
+                    ids = [vuln.get("id", "osv")] if isinstance(vuln, dict) else ["osv"]
+                    findings.append(_osv_group_finding(source, package, ids, vuln))
+    return findings
+
+
+def brakeman_findings(out):
+    return _as_list(load_json(Path(out) / "brakeman.json"), "warnings")
+
+
+def spotbugs_findings(out):
+    p = Path(out) / "spotbugs.xml"
+    if not p.exists():
+        return []
+    try:
+        root = ET.parse(p).getroot()
+    except Exception:
+        return []
+    findings = []
+    for bug in root.iter():
+        if not bug.tag.endswith("BugInstance"):
+            continue
+        source = None
+        for child in bug.iter():
+            if child.tag.endswith("SourceLine"):
+                source = child
+                break
+        findings.append({
+            "type": bug.get("type", "spotbugs"),
+            "category": bug.get("category", ""),
+            "priority": bug.get("priority", ""),
+            "rank": bug.get("rank", ""),
+            "message": bug.get("message", ""),
+            "file": source.get("sourcepath", source.get("sourcefile", "")) if source is not None else "",
+            "line": source.get("start", "") if source is not None else "",
+        })
+    return findings
+
+
 def triggered_rules(out):
     """Distinct dependency-rule ids that fired -> (tool, description)."""
     out = Path(out)
@@ -158,5 +253,22 @@ def triggered_check_rules(out):
     for f in betterleaks_findings(out):
         rid = _pick(f, "RuleID", "rule_id", "ruleId", "rule", default="betterleaks")
         rules.setdefault(rid, ("Betterleaks", _pick(f, "Description", "description", "message")))
+
+    for f in osv_findings(out):
+        rid = _pick(f, "id", default="osv")
+        package = _pick(f, "package")
+        version = _pick(f, "version")
+        package_desc = f"{package}@{version}" if version else package
+        message = _pick(f, "message")
+        desc = f"{package_desc} - {message}" if message else package_desc
+        rules.setdefault(rid, ("OSV-Scanner", desc))
+
+    for f in brakeman_findings(out):
+        rid = str(_pick(f, "warning_code", "check_name", default="brakeman"))
+        rules.setdefault(rid, ("Brakeman", _pick(f, "message")))
+
+    for f in spotbugs_findings(out):
+        rid = _pick(f, "type", default="spotbugs")
+        rules.setdefault(rid, ("SpotBugs", _pick(f, "message", "category")))
 
     return rules

@@ -24,6 +24,8 @@ these first; add per-language tools only where they buy real depth.
 | **hadolint** | Quality / security | Dockerfile linting with ShellCheck coverage for inline shell in `RUN` instructions. | Containers are common deployment glue, and Dockerfile mistakes often escape language linters. |
 | **checkov** | Security | IaC and workflow security checks for Terraform, Kubernetes, Dockerfile, GitHub Actions, and related formats. | Adds cloud/config posture checks without needing the target project to compile. |
 | **betterleaks** | Security | Secrets scanner for files, git, stdin, GitHub, GitLab, S3-compatible sources; supports JSON/SARIF output and CEL filters. | Better primary secrets sensor than Gitleaks now: same lineage, active development, richer filtering/validation. |
+| **OSV-Scanner** | Security | Known-vulnerability checks for dependency lockfiles, manifests, SBOMs, and container images; JSON/SARIF output. | Fills the dependency-CVE gap left by IaC/secrets scanners, using the open OSV advisory database. |
+| **Syft** | Supply chain inventory | SBOM/package inventory for source trees, filesystems, archives, and container images; Syft JSON/CycloneDX/SPDX output. | Gives agents the package inventory behind dependency risk, even when no vulnerability is currently reported. |
 | **ast-grep** | Dependency rules | Structural search/lint over tree-sitter ASTs; custom rules in YAML. Use it to express "no import of X from Y", banned APIs, layering checks — in *any* tree-sitter language. | The polyglot way to do architectural dependency rules without a per-language framework. Fast (Rust), JSON output. |
 | **semgrep** | Dependency rules | Same idea as ast-grep with a larger curated rule registry and ~30 languages; richer pattern logic (metavariables, taint). | Good alternative/complement to ast-grep for import-direction and forbidden-dependency rules; strong security overlap. |
 
@@ -64,6 +66,10 @@ cases cheaply; the JVM tools catch the structural ones precisely.
 ### Java / JVM
 - **PMD** — complexity rules, plus **CPD** copy-paste/duplication detector;
   standalone CLI, runnable without a build → used directly by the scaffold.
+- **SpotBugs** — bytecode-level bug detection for compiled JVM classes, with
+  optional plugins such as FindSecBugs for security patterns. The scaffold runs
+  it only when compiled class directories already exist; it does not build the
+  project.
 - **ArchUnit** — the JVM dependency-rule tool: package/class/layer dependencies,
   cyclic-dependency checks, slices. Runs as tests against compiled bytecode.
   Example in `config/archunit/`.
@@ -84,6 +90,9 @@ cases cheaply; the JVM tools catch the structural ones precisely.
 - **flay** — structural duplication.
 - **rubycritic** — aggregates flog + reek + flay + churn into one report (and a
   graded score). The scaffold runs rubycritic so you get all three at once.
+- **brakeman** — Rails-specific static security scanner for SQL injection, XSS,
+  command injection, and related framework vulnerabilities. The scaffold runs it
+  only when a Rails app is detected.
 - **packwerk** — Shopify's package-boundary / dependency-rule enforcer
   (the Ruby analogue of ArchUnit). Needs a `package.yml` layout; example in
   `config/packwerk/`.
@@ -111,7 +120,7 @@ For any language not above, pick a tool from these and add a wrapper in
 | Complexity / size metric | scc, lizard | detekt, PMD, scalafix | flog, rubycritic | eslint `complexity`, scc |
 | Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | reek | dependency-cruiser metrics |
 | Dependency *rule* (forbidden edge / layering / no-cycle) | ast-grep, semgrep | ArchUnit, Konsist | packwerk | dependency-cruiser, madge |
-| Config / security hygiene | ShellCheck, actionlint, hadolint, checkov, betterleaks | SpotBugs / FindSecBugs (optional future) | brakeman (optional future) | eslint security plugins (optional future) |
+| Config / security hygiene | ShellCheck, actionlint, hadolint, checkov, betterleaks, OSV-Scanner, Syft | SpotBugs / FindSecBugs | brakeman | eslint security plugins (optional future) |
 
 Treat each row/column cell as an independent sensor a coding agent can poll;
 the scaffold's `summary.md` is the aggregated read-out.

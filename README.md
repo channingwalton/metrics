@@ -79,13 +79,17 @@ prints an error and exits non-zero.
 | `ruff.json` | Python lint findings |
 | `checkov.json` | IaC / workflow security findings |
 | `betterleaks.json` | Secret scanning findings |
+| `osv-scanner.json` | Dependency vulnerability findings |
+| `syft.json` | SBOM package inventory |
 | `ast-grep.json` | Dependency-rule violations (custom rules) |
 | `semgrep.json` | Dependency-rule / quality matches |
 | `detekt.xml` | Kotlin complexity & smell findings |
 | `pmd.xml` / `cpd.xml` | Java rule violations / duplicate code blocks |
+| `spotbugs.xml` | JVM bytecode bug/security findings (when compiled classes exist) |
 | `depcruise.json` | JS/TS dependency-rule violations + cycles |
 | `madge-circular.json` | JS/TS circular dependency chains |
 | `rubycritic/` | Ruby complexity, churn & smells (HTML/JSON) |
+| `brakeman.json` | Rails security findings |
 | `scapegoat.xml` / `scalafix.txt` | Scala inspections / lint (only with `--sbt`) |
 
 ## What runs
@@ -100,13 +104,17 @@ prints an error and exits non-zero.
 | Python correctness / complexity | `ruff` | Python | `ruff.json` |
 | IaC / workflow security | `checkov` | Terraform, Kubernetes, Dockerfile, GitHub Actions, etc. | `checkov.json` |
 | Secret scanning | `betterleaks` | Any text repo | `betterleaks.json` |
+| Dependency vulnerabilities | `osv-scanner` | lockfiles / manifests across common ecosystems | `osv-scanner.json` |
+| SBOM inventory | `syft` | package ecosystems across source trees, filesystems, images | `syft.json` |
 | Dependency rules (custom) | `ast-grep` | tree-sitter languages | `ast-grep.json` |
 | Dependency rules (custom, alt) | `semgrep` | ~30 languages | `semgrep.json` |
 | Complexity / smells | `detekt` | Kotlin | `detekt.xml` |
 | Complexity / duplication | `pmd` + `cpd` | Java, others | `pmd.xml`, `cpd.xml` |
+| Bytecode bug/security checks | `spotbugs` | JVM bytecode (Java/Kotlin/Scala after build) | `spotbugs.xml` |
 | Dependency rules + cycles | `dependency-cruiser` | JS/TS | `depcruise.json` |
 | Module graph / cycles | `madge` | JS/TS | `madge-circular.json` |
 | Complexity / churn / smells | `rubycritic` (`flog`, `reek`, `flay`) | Ruby | `rubycritic/` |
+| Rails security | `brakeman` | Ruby on Rails | `brakeman.json` |
 
 Architectural dependency-rule tools that require a build (ArchUnit for the JVM,
 Konsist for Kotlin, packwerk for Ruby) ship as **example configs** under
@@ -143,8 +151,13 @@ Two kinds of config live here:
 | `pmd/ruleset.xml` | PMD | Java quickstart minus the noisiest rules, complexity pinned to CCN 15 |
 
 Also run automatically, without project-local config: ShellCheck, actionlint,
-hadolint, Checkov, and Betterleaks. Betterleaks scans the current filesystem
-state with its built-in rules; validation is not enabled by default.
+hadolint, Checkov, Betterleaks, OSV-Scanner, Syft, Brakeman, and SpotBugs.
+Betterleaks scans the current filesystem state with its built-in rules;
+validation is not enabled by default. Brakeman only runs for detected Rails apps.
+SpotBugs only runs when JVM sources are present and compiled class directories
+already exist; the wrapper does not build the target project. Set
+`SPOTBUGS_PLUGIN_LIST` to pass additional SpotBugs plugin jars such as
+FindSecBugs.
 
 **Build-integrated examples** (copy into your project's test suite/app — they
 need compilation or a package layout, so `analyse.sh` does not run them):

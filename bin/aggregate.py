@@ -17,8 +17,9 @@ from pathlib import Path
 
 from report_common import (
     CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
-    checkov_findings, hadolint_findings, load_json, ruff_findings,
-    shellcheck_findings, triggered_check_rules, triggered_rules,
+    brakeman_findings, checkov_findings, hadolint_findings, load_json,
+    osv_findings, ruff_findings, shellcheck_findings, spotbugs_findings,
+    syft_packages, triggered_check_rules, triggered_rules,
 )
 
 
@@ -310,6 +311,44 @@ def betterleaks_section(out: Path) -> str:
         "No secrets found.")
 
 
+def osv_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Dependency vulnerabilities (OSV-Scanner)", "osv-scanner.json",
+        osv_findings(out), lambda f: pick(f, "id", default="osv"),
+        "No vulnerable dependencies found.")
+
+
+def syft_section(out: Path) -> str:
+    if not (out / "syft.json").exists():
+        return ""
+    packages = syft_packages(out)
+    if not packages:
+        return "## SBOM inventory (Syft)\n\n- No packages found.\n"
+    by_type = Counter(pick(p, "type", default="?") for p in packages)
+    lines = [
+        "## SBOM inventory (Syft)\n",
+        f"- **{len(packages)} package(s)** found\n",
+        "\n| Package type | Count |", "|---|--:|",
+    ]
+    for typ, n in by_type.most_common(12):
+        lines.append(f"| {typ} | {n} |")
+    return "\n".join(lines) + "\n"
+
+
+def brakeman_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Rails security (Brakeman)", "brakeman.json", brakeman_findings(out),
+        lambda f: pick(f, "warning_type", "check_name", default="brakeman"),
+        "No Rails security warnings.")
+
+
+def spotbugs_section(out: Path) -> str:
+    return count_findings_section(
+        out, "JVM bytecode bugs (SpotBugs)", "spotbugs.xml", spotbugs_findings(out),
+        lambda f: pick(f, "type", default="spotbugs"),
+        "No SpotBugs findings.")
+
+
 # ----------------------------------------------------- dependency rules ---
 def ast_grep_section(out: Path) -> str:
     if not (out / "ast-grep.json").exists():
@@ -477,6 +516,28 @@ def write_findings_csv(out: Path) -> int:
                      pick(f, "StartLine", "start_line", "line"),
                      pick(f, "Description", "description", "message")))
 
+    # osv-scanner
+    for f in osv_findings(out):
+        package = pick(f, "package")
+        version = pick(f, "version")
+        ecosystem = pick(f, "ecosystem")
+        rows.append(("security", "osv-scanner", pick(f, "severity"),
+                     pick(f, "id", default="osv"), pick(f, "source"), "",
+                     f"{package}@{version} ({ecosystem}) {pick(f, 'message')}"))
+
+    # brakeman
+    for f in brakeman_findings(out):
+        rows.append(("security", "brakeman", pick(f, "confidence"),
+                     pick(f, "warning_code", "check_name", default="brakeman"),
+                     pick(f, "file"), pick(f, "line"), pick(f, "message")))
+
+    # spotbugs
+    for f in spotbugs_findings(out):
+        category = "security" if pick(f, "category").upper() == "SECURITY" else "quality"
+        rows.append((category, "spotbugs", pick(f, "priority"),
+                     pick(f, "type", default="spotbugs"),
+                     pick(f, "file"), pick(f, "line"), pick(f, "message")))
+
     # cpd duplication — one row per location, sharing a block id
     root = xml_root("cpd.xml")
     if root is not None:
@@ -621,7 +682,8 @@ def main():
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
         scapegoat_section, scalafix_section, rubycritic_section,
         shellcheck_section, actionlint_section, hadolint_section, ruff_section,
-        checkov_section, betterleaks_section,
+        checkov_section, betterleaks_section, osv_section, syft_section,
+        brakeman_section, spotbugs_section,
         ast_grep_section, semgrep_section, depcruise_section, madge_section,
     ):
         try:
@@ -662,6 +724,10 @@ def main():
         "ruff.json": "Python lint findings",
         "checkov.json": "IaC security findings",
         "betterleaks.json": "secret scanning findings",
+        "osv-scanner.json": "dependency vulnerability findings",
+        "syft.json": "SBOM package inventory",
+        "brakeman.json": "Rails security findings",
+        "spotbugs.xml": "JVM bytecode bug/security findings",
         "ast-grep.json": "dependency-rule violations",
         "semgrep.json": "dependency-rule / quality matches",
         "depcruise.json": "dependency-cruiser violations",

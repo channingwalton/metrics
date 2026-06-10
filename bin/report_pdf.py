@@ -29,8 +29,9 @@ from reportlab.platypus import (
 
 from report_common import (
     CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
-    checkov_findings, hadolint_findings, load_json, ruff_findings,
-    shellcheck_findings, triggered_check_rules, triggered_rules,
+    brakeman_findings, checkov_findings, hadolint_findings, load_json,
+    osv_findings, ruff_findings, shellcheck_findings, spotbugs_findings,
+    syft_packages, triggered_check_rules, triggered_rules,
 )
 
 INK = "#1f2933"
@@ -241,6 +242,26 @@ def read_betterleaks(out):
     return count_json_rules(
         betterleaks_findings(out), "RuleID", "rule_id", "ruleId", "rule",
         default="betterleaks")
+
+
+def read_osv(out):
+    return count_json_rules(osv_findings(out), "id", default="osv")
+
+
+def read_syft(out):
+    c = Counter()
+    for pkg in syft_packages(out):
+        c[pick(pkg, "type", default="?")] += 1
+    return c
+
+
+def read_brakeman(out):
+    return count_json_rules(
+        brakeman_findings(out), "warning_type", "check_name", default="brakeman")
+
+
+def read_spotbugs(out):
+    return count_json_rules(spotbugs_findings(out), "type", default="spotbugs")
 
 
 def count_dep_violations(out):
@@ -482,16 +503,21 @@ def build(out: Path, target: str):
     detekt, pmd, scape = read_detekt(out), read_pmd(out), read_scapegoat(out)
     shell, actions, docker = read_shellcheck(out), read_actionlint(out), read_hadolint(out)
     ruff, checkov, secrets = read_ruff(out), read_checkov(out), read_betterleaks(out)
+    osv, syft = read_osv(out), read_syft(out)
+    brakeman, spotbugs = read_brakeman(out), read_spotbugs(out)
     ruby = read_rubycritic(out)
     quality_blocks = []
     for title, counts in (("Kotlin (detekt)", detekt), ("Java (PMD)", pmd),
                           ("Scala (scapegoat)", scape),
+                          ("JVM bytecode (SpotBugs)", spotbugs),
                           ("Shell (ShellCheck)", shell),
                           ("GitHub Actions (actionlint)", actions),
                           ("Dockerfiles (hadolint)", docker),
                           ("Python (Ruff)", ruff),
                           ("IaC security (Checkov)", checkov),
-                          ("Secrets (Betterleaks)", secrets)):
+                          ("Secrets (Betterleaks)", secrets),
+                          ("Dependency vulnerabilities (OSV-Scanner)", osv),
+                          ("Rails security (Brakeman)", brakeman)):
         if counts:
             quality_blocks.append((title,
                 finding_table(["Rule", "Count"],
@@ -501,14 +527,22 @@ def build(out: Path, target: str):
             "Kotlin (detekt)": "detekt.xml",
             "Java (PMD)": "pmd.xml",
             "Scala (scapegoat)": "scapegoat.xml",
+            "JVM bytecode (SpotBugs)": "spotbugs.xml",
             "Shell (ShellCheck)": "shellcheck.json",
             "GitHub Actions (actionlint)": "actionlint.json",
             "Dockerfiles (hadolint)": "hadolint.json",
             "Python (Ruff)": "ruff.json",
             "IaC security (Checkov)": "checkov.json",
             "Secrets (Betterleaks)": "betterleaks.json",
+            "Dependency vulnerabilities (OSV-Scanner)": "osv-scanner.json",
+            "Rails security (Brakeman)": "brakeman.json",
         }[title] in {p.name for p in out.iterdir()}:
             quality_blocks.append((title, Paragraph("No findings.", meta)))
+    if syft:
+        quality_blocks.append(("SBOM inventory (Syft)",
+            finding_table(["Package type", "Count"],
+                          [(k, v) for k, v in syft.most_common(12)],
+                          [13 * cm, 4 * cm])))
     if ruby:
         quality_blocks.append(("Ruby (rubycritic)",
             finding_table(["Rating", "Complexity", "Churn", "File"], ruby[:12],
@@ -608,6 +642,10 @@ def build(out: Path, target: str):
         "ruff.json": "Python lint findings.",
         "checkov.json": "IaC security findings.",
         "betterleaks.json": "Secret scanning findings.",
+        "osv-scanner.json": "Dependency vulnerability findings.",
+        "syft.json": "SBOM package inventory.",
+        "brakeman.json": "Rails security findings.",
+        "spotbugs.xml": "JVM bytecode bug/security findings.",
         "ast-grep.json": "Dependency-rule violations.",
         "semgrep.json": "Dependency-rule / quality matches.",
         "depcruise.json": "Dependency-cruiser violations.",

@@ -93,6 +93,7 @@ IFS=' ' read -r -a IGNORE_DIRS <<< "${EXCLUDE_DIRS:-node_modules .git build dist
 # Build the per-tool exclude arguments from IGNORE_DIRS (+ minified files).
 FIND_PRUNE=(); SCC_EXCLUDE=""; LIZARD_X=(-x "*.min.js"); AG_GLOBS=(--globs '!**/*.min.js'); SG_EXCLUDE=(--exclude '*.min.js')
 RUFF_EXCLUDE=(); CHECKOV_SKIP=()
+SYFT_EXCLUDE=(--exclude '**/*.min.js')
 for d in "${IGNORE_DIRS[@]}"; do
   FIND_PRUNE+=( -not -path "*/$d/*" )
   SCC_EXCLUDE="${SCC_EXCLUDE:+$SCC_EXCLUDE,}$d"
@@ -101,11 +102,26 @@ for d in "${IGNORE_DIRS[@]}"; do
   SG_EXCLUDE+=( --exclude "$d" )
   RUFF_EXCLUDE+=( --exclude "$d" )
   CHECKOV_SKIP+=( --skip-path "$d" )
+  SYFT_EXCLUDE+=( --exclude "**/$d/**" )
 done
 DETEKT_EXC="$(printf '**/%s/**,' "${IGNORE_DIRS[@]}")"; DETEKT_EXC="${DETEKT_EXC%,}"
 
 # present LANG_GLOB -> 0 if any matching file exists under TARGET
 present() { find "$TARGET" -type f \( "$@" \) "${FIND_PRUNE[@]}" -print -quit 2>/dev/null | grep -q .; }
+
+# rails_app -> 0 if TARGET looks like a Rails app.
+rails_app() { [ -f "$TARGET/config/application.rb" ] || [ -f "$TARGET/config/environment.rb" ]; }
+
+dependency_manifest_present() {
+  present -name 'package-lock.json' -o -name 'yarn.lock' -o \
+    -name 'pnpm-lock.yaml' -o -name 'bun.lock' -o -name 'bun.lockb' -o \
+    -name 'Gemfile.lock' -o -name 'go.mod' -o -name 'Cargo.lock' -o \
+    -name 'Pipfile.lock' -o -name 'poetry.lock' -o -name 'requirements*.txt' -o \
+    -name 'pom.xml' -o -name 'build.gradle' -o -name 'build.gradle.kts' -o \
+    -name 'gradle.lockfile' -o -name 'build.sbt' -o \
+    -name 'project.assets.json' -o -name 'packages.lock.json' -o \
+    -name 'composer.lock' -o -name 'mix.lock' -o -name 'deno.lock'
+}
 
 say "Target:  $TARGET"
 say "Config:  $CONF"
@@ -187,6 +203,20 @@ if have betterleaks; then
   keep "$OUT/betterleaks.json" json betterleaks "betterleaks.json (secret scanning findings)"
 else skip "betterleaks (secret scanning)"; fi
 
+# dependency vulnerabilities
+if dependency_manifest_present; then
+  if have osv-scanner; then
+    osv-scanner scan --format json "$TARGET" > "$OUT/osv-scanner.json" 2> "$(errlog osv-scanner)" || true
+    keep "$OUT/osv-scanner.json" json osv-scanner "osv-scanner.json (dependency vulnerabilities)"
+  else skip "osv-scanner (dependency manifests present, tool missing)"; fi
+fi
+
+# software bill of materials
+if have syft; then
+  syft dir:"$TARGET" -o syft-json "${SYFT_EXCLUDE[@]}" > "$OUT/syft.json" 2> "$(errlog syft)" || true
+  keep "$OUT/syft.json" json syft "syft.json (SBOM package inventory)"
+else skip "syft (SBOM inventory)"; fi
+
 # dependency rules — custom YAML rules under config/ast-grep/rules
 if have ast-grep; then
   if [ -f "$CONF/ast-grep/sgconfig.yml" ]; then
@@ -228,6 +258,31 @@ if present -name '*.java'; then
   else skip "pmd (Java present, tool missing)"; fi
 fi
 
+# JVM bytecode bug/security checks. SpotBugs needs compiled classes, so it only
+# runs when build outputs already exist; the wrapper does not compile projects.
+if present -name '*.java' -o -name '*.kt' -o -name '*.kts' -o -name '*.scala'; then
+  if have spotbugs; then
+    SPOTBUGS_INPUTS=()
+    while IFS= read -r d; do SPOTBUGS_INPUTS+=( "$d" ); done < <(
+      find "$TARGET" -type d \( \
+        -path '*/target/classes' -o \
+        -path '*/target/scala-*/classes' -o \
+        -path '*/build/classes/java/main' -o \
+        -path '*/build/classes/kotlin/main' -o \
+        -path '*/build/classes/scala/main' -o \
+        -path '*/out/production/*' -o \
+        -path '*/classes' \
+      \) -print 2>/dev/null | sort -u
+    )
+    if [ ${#SPOTBUGS_INPUTS[@]} -gt 0 ]; then
+      SPOTBUGS_ARGS=(-textui -xml:withMessages="$OUT/spotbugs.xml" -effort:default -medium)
+      [ -n "${SPOTBUGS_PLUGIN_LIST:-}" ] && SPOTBUGS_ARGS+=( -pluginList "$SPOTBUGS_PLUGIN_LIST" )
+      spotbugs "${SPOTBUGS_ARGS[@]}" "${SPOTBUGS_INPUTS[@]}" >/dev/null 2> "$(errlog spotbugs)" || true
+      keep "$OUT/spotbugs.xml" xml spotbugs "spotbugs.xml (JVM bytecode bug/security findings)"
+    else skip "spotbugs (JVM sources present, no compiled classes found)"; fi
+  else skip "spotbugs (JVM sources present, tool missing)"; fi
+fi
+
 # ----------------------------------------------------------------- TS / JS ---
 if present -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx'; then
   if have depcruise; then
@@ -248,6 +303,12 @@ if present -name '*.rb'; then
       ok "rubycritic/ (Ruby complexity/churn/smells)"; rm -f "$(errlog rubycritic)"
     else record_fail rubycritic; fi
   else skip "rubycritic (Ruby present, tool missing)"; fi
+  if rails_app; then
+    if have brakeman; then
+      brakeman -q --no-exit-on-warn --no-exit-on-error -f json -o "$OUT/brakeman.json" -p "$TARGET" >/dev/null 2> "$(errlog brakeman)" || true
+      keep "$OUT/brakeman.json" json brakeman "brakeman.json (Rails security findings)"
+    else skip "brakeman (Rails app present, tool missing)"; fi
+  else skip "brakeman (Ruby present, no Rails app detected)"; fi
 fi
 
 # ------------------------------------------------------------------ Scala ---
