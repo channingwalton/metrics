@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Run all available static-analysis sensors over a target repo.
-# Usage: bin/analyse.sh [--config DIR] [--reports DIR] [--sbt] [TARGET_DIR]
+# Usage: bin/analyse.sh [--config DIR] [--reports DIR] [--sbt] [--cargo] [--deep] [TARGET_DIR]
 #   --config DIR   directory of tool rule configs (default: <project>/config)
 #   --reports DIR  top-level reports folder; runs land in DIR/<timestamp>/ with a
 #                  DIR/latest symlink (default: ./reports in the current directory)
 #   --sbt          for sbt projects, also run scalafix/scapegoat (compiles; slow)
+#   --cargo        for Cargo projects, also run cargo clippy (compiles; slow)
+#   --deep         run all available build-integrated sensors (currently --sbt and --cargo)
 #   TARGET_DIR     repo to analyse (default: current directory)
 #
 # Detects which languages are present and which tools are installed, runs only
@@ -20,6 +22,7 @@ CONF="$HERE/config"
 REPORTS_DIR="$PWD/reports"
 TARGET_ARG=""
 RUN_SBT=0
+RUN_CARGO=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONF="$2"; shift 2 ;;
@@ -27,7 +30,9 @@ while [ $# -gt 0 ]; do
     --reports) REPORTS_DIR="$2"; shift 2 ;;
     --reports=*) REPORTS_DIR="${1#*=}"; shift ;;
     --sbt) RUN_SBT=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --cargo) RUN_CARGO=1; shift ;;
+    --deep) RUN_SBT=1; RUN_CARGO=1; shift ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) TARGET_ARG="$1"; shift ;;
   esac
@@ -123,6 +128,9 @@ dependency_manifest_present() {
     -name 'composer.lock' -o -name 'mix.lock' -o -name 'deno.lock'
 }
 
+cargo_manifest_present() { present -name 'Cargo.toml'; }
+cargo_lock_present() { present -name 'Cargo.lock'; }
+
 say "Target:  $TARGET"
 say "Config:  $CONF"
 say "Reports: $OUT"
@@ -211,6 +219,56 @@ if dependency_manifest_present; then
   else skip "osv-scanner (dependency manifests present, tool missing)"; fi
 fi
 
+# Rust dependency vulnerabilities. Run per Cargo.lock so nested Cargo projects
+# in polyglot repos are covered without assuming the target root is a crate.
+if cargo_lock_present; then
+  if have cargo && have cargo-audit; then
+    CARGO_LOCKS="$OUT/.cargo-locks"
+    find "$TARGET" -type f -name 'Cargo.lock' "${FIND_PRUNE[@]}" > "$CARGO_LOCKS" 2>/dev/null || true
+    if [ -s "$CARGO_LOCKS" ]; then
+      AUDIT_TMP="$OUT/.cargo-audit"
+      AUDIT_INDEX="$OUT/.cargo-audit-index"
+      mkdir -p "$AUDIT_TMP"
+      : > "$AUDIT_INDEX"
+      AUDIT_N=0
+      while IFS= read -r lock; do
+        AUDIT_N=$((AUDIT_N + 1))
+        PART="$AUDIT_TMP/$AUDIT_N.json"
+        cargo audit --json --file "$lock" > "$PART" 2>> "$(errlog cargo-audit)" || true
+        printf '%s\t%s\n' "$lock" "$PART" >> "$AUDIT_INDEX"
+      done < "$CARGO_LOCKS"
+      if "$PY" - "$AUDIT_INDEX" "$OUT/cargo-audit.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index = Path(sys.argv[1])
+out = Path(sys.argv[2])
+runs = []
+for line in index.read_text().splitlines():
+    if not line.strip():
+        continue
+    source, path = line.split("\t", 1)
+    try:
+        report = json.loads(Path(path).read_text())
+    except Exception:
+        continue
+    runs.append({"source": source, "report": report})
+if not runs:
+    sys.exit(1)
+out.write_text(json.dumps({"runs": runs}))
+PY
+      then
+        keep "$OUT/cargo-audit.json" json cargo-audit "cargo-audit.json (Rust dependency vulnerabilities)"
+      else
+        rm -f "$OUT/cargo-audit.json"
+        record_fail cargo-audit
+      fi
+      rm -rf "$AUDIT_TMP" "$AUDIT_INDEX" "$CARGO_LOCKS"
+    else skip "cargo audit (no Cargo.lock files after exclusions)"; fi
+  else skip "cargo-audit (Cargo.lock present, cargo or cargo-audit missing)"; fi
+fi
+
 # software bill of materials
 if have syft; then
   syft dir:"$TARGET" -o syft-json "${SYFT_EXCLUDE[@]}" > "$OUT/syft.json" 2> "$(errlog syft)" || true
@@ -232,11 +290,112 @@ if have semgrep && [ -f "$CONF/semgrep/import-rules.yml" ]; then
   keep "$OUT/semgrep.json" json semgrep "semgrep.json (dependency rules)"
 else skip "semgrep (dependency rules)"; fi
 
+# -------------------------------------------------------------------- Rust ---
+# Baseline Rust metrics are covered by scc/lizard above. cargo clippy compiles,
+# so it is opt-in like sbt-based Scala analysis.
+if cargo_manifest_present; then
+  if [ "$RUN_CARGO" = "1" ]; then
+    if have cargo; then
+      CLIPPY_RAW="$OUT/.cargo-clippy.jsonl"
+      CARGO_MANIFESTS_ALL="$OUT/.cargo-manifests-all"
+      CARGO_MANIFESTS="$OUT/.cargo-manifests"
+      find "$TARGET" -type f -name 'Cargo.toml' "${FIND_PRUNE[@]}" > "$CARGO_MANIFESTS_ALL" 2>/dev/null || true
+      "$PY" - "$CARGO_MANIFESTS_ALL" "$CARGO_MANIFESTS" <<'PY'
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+manifests = sorted(
+    (Path(line) for line in src.read_text().splitlines() if line.strip()),
+    key=lambda p: len(p.parts),
+)
+roots = []
+kept = []
+for manifest in manifests:
+    root = manifest.parent
+    if any(parent == root or parent in root.parents for parent in roots):
+        continue
+    roots.append(root)
+    kept.append(manifest)
+dst.write_text("\n".join(str(p) for p in kept) + ("\n" if kept else ""))
+PY
+      : > "$CLIPPY_RAW"
+      CLIPPY_RC=0
+      if [ -s "$CARGO_MANIFESTS" ]; then
+        while IFS= read -r manifest; do
+          cargo clippy --manifest-path "$manifest" --workspace --all-targets --all-features --message-format=json >> "$CLIPPY_RAW" 2>> "$(errlog cargo-clippy)" || CLIPPY_RC=1
+        done < "$CARGO_MANIFESTS"
+      else
+        CLIPPY_RC=1
+      fi
+      if "$PY" - "$CLIPPY_RAW" "$OUT/cargo-clippy.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[1])
+out = Path(sys.argv[2])
+findings = []
+seen = set()
+for line in raw.read_text(errors="replace").splitlines():
+    try:
+        event = json.loads(line)
+    except Exception:
+        continue
+    if event.get("reason") != "compiler-message":
+        continue
+    message = event.get("message", {})
+    if not isinstance(message, dict):
+        continue
+    code = message.get("code") or {}
+    code_id = code.get("code", "") if isinstance(code, dict) else ""
+    level = message.get("level", "")
+    spans = [s for s in message.get("spans", []) if s.get("is_primary")]
+    spans = spans or message.get("spans", []) or [{}]
+    span = spans[0] if isinstance(spans[0], dict) else {}
+    if not code_id and level not in ("warning", "error"):
+        continue
+    finding = {
+        "code": code_id or "rustc",
+        "level": level,
+        "message": message.get("message", ""),
+        "file": span.get("file_name", ""),
+        "line": span.get("line_start", ""),
+    }
+    key = (finding["code"], finding["level"], finding["message"],
+           finding["file"], finding["line"])
+    if key in seen:
+        continue
+    seen.add(key)
+    findings.append(finding)
+out.write_text(json.dumps(findings))
+PY
+      then
+        CLIPPY_HAS_FINDINGS=0
+        "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) else 1)' "$OUT/cargo-clippy.json" && CLIPPY_HAS_FINDINGS=1
+        if [ "$CLIPPY_RC" = 0 ] || [ "$CLIPPY_HAS_FINDINGS" = 1 ]; then
+          keep "$OUT/cargo-clippy.json" json cargo-clippy "cargo-clippy.json (Rust lint findings)"
+        else
+          rm -f "$OUT/cargo-clippy.json"
+          record_fail cargo-clippy
+        fi
+      else
+        rm -f "$OUT/cargo-clippy.json"
+        record_fail cargo-clippy
+      fi
+      rm -f "$CLIPPY_RAW" "$CARGO_MANIFESTS" "$CARGO_MANIFESTS_ALL"
+    else skip "cargo clippy (--cargo set but cargo missing)"; fi
+  else
+    skip "cargo clippy (pass --cargo or --deep for Cargo projects; scc/lizard cover baseline metrics)"
+  fi
+fi
+
 # ------------------------------------------------------------------ Kotlin ---
 if present -name '*.kt' -o -name '*.kts'; then
   if have detekt; then
-    DKCFG=""; [ -f "$CONF/detekt/detekt.yml" ] && DKCFG="--config $CONF/detekt/detekt.yml --build-upon-default-config"
-    detekt --input "$TARGET" --excludes "$DETEKT_EXC" $DKCFG --report xml:"$OUT/detekt.xml" >/dev/null 2> "$(errlog detekt)" || true
+    DKCFG=(); [ -f "$CONF/detekt/detekt.yml" ] && DKCFG=(--config "$CONF/detekt/detekt.yml" --build-upon-default-config)
+    detekt --input "$TARGET" --excludes "$DETEKT_EXC" "${DKCFG[@]}" --report xml:"$OUT/detekt.xml" >/dev/null 2> "$(errlog detekt)" || true
     keep "$OUT/detekt.xml" xml detekt "detekt.xml (Kotlin complexity/smells)"
   else skip "detekt (Kotlin present, tool missing)"; fi
 fi
@@ -286,8 +445,8 @@ fi
 # ----------------------------------------------------------------- TS / JS ---
 if present -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx'; then
   if have depcruise; then
-    CFG=""; [ -f "$CONF/dependency-cruiser/.dependency-cruiser.cjs" ] && CFG="--config $CONF/dependency-cruiser/.dependency-cruiser.cjs"
-    depcruise $CFG --output-type json "$TARGET" > "$OUT/depcruise.json" 2> "$(errlog dependency-cruiser)" || true
+    CFG=(); [ -f "$CONF/dependency-cruiser/.dependency-cruiser.cjs" ] && CFG=(--config "$CONF/dependency-cruiser/.dependency-cruiser.cjs")
+    depcruise "${CFG[@]}" --output-type json "$TARGET" > "$OUT/depcruise.json" 2> "$(errlog dependency-cruiser)" || true
     keep "$OUT/depcruise.json" json dependency-cruiser "depcruise.json (TS/JS dependency rules + cycles)"
   else skip "dependency-cruiser (TS/JS present, tool missing)"; fi
   if have madge; then
@@ -330,7 +489,7 @@ if present -name '*.scala'; then
   elif [ "$RUN_SBT" = "1" ]; then
     skip "scalafix/scapegoat (--sbt set but no build.sbt or sbt not installed)"
   else
-    skip "scalafix/scapegoat (pass --sbt for sbt projects; lizard covers CCN)"
+    skip "scalafix/scapegoat (pass --sbt or --deep for sbt projects; lizard covers CCN)"
   fi
 fi
 

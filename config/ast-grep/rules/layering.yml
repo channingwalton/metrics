@@ -74,6 +74,19 @@ constraints:
     regex: "infra|infrastructure"
 
 ---
+id: rust-domain-use-infra
+language: Rust
+severity: error
+message: "Domain layer must not use infrastructure (Rust)."
+files:
+  - "**/domain/**"
+rule:
+  pattern: use $PKG;
+constraints:
+  PKG:
+    regex: "infra|infrastructure"
+
+---
 id: python-domain-import-infra
 language: Python
 severity: error

@@ -27,6 +27,9 @@ bin/install.sh
 # 2. run all available sensors over a target repo
 bin/analyse.sh /path/to/your/repo
 
+# ...or include every build-integrated sensor
+bin/analyse.sh --deep /path/to/your/repo
+
 # ...or point at your own rule configs / reports location
 bin/analyse.sh --config /path/to/configs --reports /path/to/reports /path/to/your/repo
 
@@ -47,11 +50,36 @@ so it's slow and off by default). They need the matching sbt plugins added to
 the project; scapegoat is Scala 2.x only, so on a Scala 3 repo lean on lizard +
 ast-grep + the compiler's own `-Wall`/`-Wunused` flags instead.
 
+`--cargo` additionally runs `cargo clippy` on Cargo projects (it compiles, so
+it's slow and off by default). `cargo audit` runs automatically when
+`Cargo.lock` files are present and the tool is installed.
+
+`--deep` enables every build-integrated sensor, currently `--sbt` and
+`--cargo`. Build-integrated sensors can compile the target project, download
+dependencies, and run build scripts or compiler plugins; keep the default run
+for cheap no-build telemetry, and use `--deep` when you want maximum depth.
+
 `analyse.sh` detects which languages are present and which tools are installed,
 runs only what applies, and writes one report per tool plus an aggregated
 `summary.md` into `reports/<timestamp>/` under the current directory (symlinked
 as `reports/latest/`; change the reports folder with `--reports`). Missing tools
 are skipped with a note, never a hard failure.
+
+### Rust projects
+
+Rust repositories get the no-build sensors automatically: `scc`, `lizard`,
+`osv-scanner`, `syft`, Rust ast-grep/semgrep dependency rules, and `cargo audit`
+when `Cargo.lock` and `cargo-audit` are present.
+
+Run Rust's compiling lint sensor explicitly with either:
+
+```bash
+bin/analyse.sh --cargo /path/to/rust/repo
+bin/analyse.sh --deep /path/to/rust/repo
+```
+
+`cargo clippy` is opt-in because it compiles the project. `cargo audit` may
+update its RustSec advisory database under `~/.cargo`.
 
 ## Output files
 
@@ -80,17 +108,19 @@ prints an error and exits non-zero.
 | `checkov.json` | IaC / workflow security findings |
 | `betterleaks.json` | Secret scanning findings |
 | `osv-scanner.json` | Dependency vulnerability findings |
+| `cargo-audit.json` | Rust dependency vulnerability findings |
 | `syft.json` | SBOM package inventory |
 | `ast-grep.json` | Dependency-rule violations (custom rules) |
 | `semgrep.json` | Dependency-rule / quality matches |
 | `detekt.xml` | Kotlin complexity & smell findings |
 | `pmd.xml` / `cpd.xml` | Java rule violations / duplicate code blocks |
 | `spotbugs.xml` | JVM bytecode bug/security findings (when compiled classes exist) |
+| `cargo-clippy.json` | Rust lint findings (only with `--cargo` or `--deep`) |
 | `depcruise.json` | JS/TS dependency-rule violations + cycles |
 | `madge-circular.json` | JS/TS circular dependency chains |
 | `rubycritic/` | Ruby complexity, churn & smells (HTML/JSON) |
 | `brakeman.json` | Rails security findings |
-| `scapegoat.xml` / `scalafix.txt` | Scala inspections / lint (only with `--sbt`) |
+| `scapegoat.xml` / `scalafix.txt` | Scala inspections / lint (only with `--sbt` or `--deep`) |
 
 ## What runs
 
@@ -105,12 +135,14 @@ prints an error and exits non-zero.
 | IaC / workflow security | `checkov` | Terraform, Kubernetes, Dockerfile, GitHub Actions, etc. | `checkov.json` |
 | Secret scanning | `betterleaks` | Any text repo | `betterleaks.json` |
 | Dependency vulnerabilities | `osv-scanner` | lockfiles / manifests across common ecosystems | `osv-scanner.json` |
+| Rust dependency vulnerabilities | `cargo audit` | Rust / Cargo | `cargo-audit.json` |
 | SBOM inventory | `syft` | package ecosystems across source trees, filesystems, images | `syft.json` |
 | Dependency rules (custom) | `ast-grep` | tree-sitter languages | `ast-grep.json` |
 | Dependency rules (custom, alt) | `semgrep` | ~30 languages | `semgrep.json` |
 | Complexity / smells | `detekt` | Kotlin | `detekt.xml` |
 | Complexity / duplication | `pmd` + `cpd` | Java, others | `pmd.xml`, `cpd.xml` |
 | Bytecode bug/security checks | `spotbugs` | JVM bytecode (Java/Kotlin/Scala after build) | `spotbugs.xml` |
+| Rust lint / correctness | `cargo clippy` | Rust / Cargo (only with `--cargo` or `--deep`) | `cargo-clippy.json` |
 | Dependency rules + cycles | `dependency-cruiser` | JS/TS | `depcruise.json` |
 | Module graph / cycles | `madge` | JS/TS | `madge-circular.json` |
 | Complexity / churn / smells | `rubycritic` (`flog`, `reek`, `flay`) | Ruby | `rubycritic/` |
@@ -142,13 +174,14 @@ Two kinds of config live here:
 
 | Config | Tool | What it sets |
 |---|---|---|
-| `ast-grep/rules/layering.yml` | ast-grep | "domain must not import infra" as a forbidden-edge rule for TS/Scala/Java/Kotlin/Python |
+| `ast-grep/rules/layering.yml` | ast-grep | "domain must not import infra" as a forbidden-edge rule for TS/Scala/Java/Kotlin/Rust/Python |
 | `ast-grep/rules/quality.yml` | ast-grep | high-confidence checks: no focused tests, no stray `console.log`/`println`, no `printStackTrace` |
 | `semgrep/import-rules.yml` | semgrep | layering rules + empty-catch / focused-test / raw-SQL-in-controller checks |
 | `dependency-cruiser/.dependency-cruiser.cjs` | dependency-cruiser | no cycles, no orphans, no dev-dep/test leakage into prod, domain↛infra |
 | `ruff/ruff.toml` | Ruff | Python correctness rules + McCabe complexity 15 |
 | `detekt/detekt.yml` | detekt | Kotlin complexity thresholds (CCN/cognitive 15, long method/params), applied with `--build-upon-default-config` |
 | `pmd/ruleset.xml` | PMD | Java quickstart minus the noisiest rules, complexity pinned to CCN 15 |
+| `cargo clippy` | Rust | Rust compiler + Clippy lints, only with `--cargo` or `--deep` |
 
 Also run automatically, without project-local config: ShellCheck, actionlint,
 hadolint, Checkov, Betterleaks, OSV-Scanner, Syft, Brakeman, and SpotBugs.
@@ -157,7 +190,8 @@ validation is not enabled by default. Brakeman only runs for detected Rails apps
 SpotBugs only runs when JVM sources are present and compiled class directories
 already exist; the wrapper does not build the target project. Set
 `SPOTBUGS_PLUGIN_LIST` to pass additional SpotBugs plugin jars such as
-FindSecBugs.
+FindSecBugs. Cargo Audit runs when `Cargo.lock` files are present and
+`cargo-audit` is installed.
 
 **Build-integrated examples** (copy into your project's test suite/app — they
 need compilation or a package layout, so `analyse.sh` does not run them):

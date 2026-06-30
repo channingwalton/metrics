@@ -29,9 +29,10 @@ from reportlab.platypus import (
 
 from report_common import (
     CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
-    brakeman_findings, checkov_findings, hadolint_findings, load_json,
-    osv_findings, ruff_findings, shellcheck_findings, spotbugs_findings,
-    syft_packages, triggered_check_rules, triggered_rules,
+    brakeman_findings, cargo_audit_findings, cargo_clippy_findings,
+    checkov_findings, hadolint_findings, load_json, osv_findings,
+    ruff_findings, shellcheck_findings, spotbugs_findings, syft_packages,
+    triggered_check_rules, triggered_rules,
 )
 
 INK = "#1f2933"
@@ -234,6 +235,11 @@ def read_ruff(out):
     return count_json_rules(ruff_findings(out), "code", "Code", default="ruff")
 
 
+def read_cargo_clippy(out):
+    return count_json_rules(
+        cargo_clippy_findings(out), "code", default="cargo-clippy")
+
+
 def read_checkov(out):
     return count_json_rules(checkov_findings(out), "check_id", "checkId", default="checkov")
 
@@ -246,6 +252,10 @@ def read_betterleaks(out):
 
 def read_osv(out):
     return count_json_rules(osv_findings(out), "id", default="osv")
+
+
+def read_cargo_audit(out):
+    return count_json_rules(cargo_audit_findings(out), "id", default="cargo-audit")
 
 
 def read_syft(out):
@@ -502,8 +512,9 @@ def build(out: Path, target: str):
     # --- code-quality findings ----------------------------------------------
     detekt, pmd, scape = read_detekt(out), read_pmd(out), read_scapegoat(out)
     shell, actions, docker = read_shellcheck(out), read_actionlint(out), read_hadolint(out)
-    ruff, checkov, secrets = read_ruff(out), read_checkov(out), read_betterleaks(out)
-    osv, syft = read_osv(out), read_syft(out)
+    ruff, clippy = read_ruff(out), read_cargo_clippy(out)
+    checkov, secrets = read_checkov(out), read_betterleaks(out)
+    osv, cargo_audit, syft = read_osv(out), read_cargo_audit(out), read_syft(out)
     brakeman, spotbugs = read_brakeman(out), read_spotbugs(out)
     ruby = read_rubycritic(out)
     quality_blocks = []
@@ -514,9 +525,11 @@ def build(out: Path, target: str):
                           ("GitHub Actions (actionlint)", actions),
                           ("Dockerfiles (hadolint)", docker),
                           ("Python (Ruff)", ruff),
+                          ("Rust (cargo clippy)", clippy),
                           ("IaC security (Checkov)", checkov),
                           ("Secrets (Betterleaks)", secrets),
                           ("Dependency vulnerabilities (OSV-Scanner)", osv),
+                          ("Rust dependency vulnerabilities (cargo audit)", cargo_audit),
                           ("Rails security (Brakeman)", brakeman)):
         if counts:
             quality_blocks.append((title,
@@ -532,9 +545,11 @@ def build(out: Path, target: str):
             "GitHub Actions (actionlint)": "actionlint.json",
             "Dockerfiles (hadolint)": "hadolint.json",
             "Python (Ruff)": "ruff.json",
+            "Rust (cargo clippy)": "cargo-clippy.json",
             "IaC security (Checkov)": "checkov.json",
             "Secrets (Betterleaks)": "betterleaks.json",
             "Dependency vulnerabilities (OSV-Scanner)": "osv-scanner.json",
+            "Rust dependency vulnerabilities (cargo audit)": "cargo-audit.json",
             "Rails security (Brakeman)": "brakeman.json",
         }[title] in {p.name for p in out.iterdir()}:
             quality_blocks.append((title, Paragraph("No findings.", meta)))
@@ -640,9 +655,11 @@ def build(out: Path, target: str):
         "actionlint.json": "GitHub Actions workflow findings.",
         "hadolint.json": "Dockerfile findings.",
         "ruff.json": "Python lint findings.",
+        "cargo-clippy.json": "Rust lint findings.",
         "checkov.json": "IaC security findings.",
         "betterleaks.json": "Secret scanning findings.",
         "osv-scanner.json": "Dependency vulnerability findings.",
+        "cargo-audit.json": "Rust dependency vulnerability findings.",
         "syft.json": "SBOM package inventory.",
         "brakeman.json": "Rails security findings.",
         "spotbugs.xml": "JVM bytecode bug/security findings.",

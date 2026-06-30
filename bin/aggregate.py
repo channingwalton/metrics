@@ -17,9 +17,10 @@ from pathlib import Path
 
 from report_common import (
     CCN_WARN, actionlint_findings, ast_grep_findings, betterleaks_findings,
-    brakeman_findings, checkov_findings, hadolint_findings, load_json,
-    osv_findings, ruff_findings, shellcheck_findings, spotbugs_findings,
-    syft_packages, triggered_check_rules, triggered_rules,
+    brakeman_findings, cargo_audit_findings, cargo_clippy_findings,
+    checkov_findings, hadolint_findings, load_json, osv_findings,
+    ruff_findings, shellcheck_findings, spotbugs_findings, syft_packages,
+    triggered_check_rules, triggered_rules,
 )
 
 
@@ -297,6 +298,14 @@ def ruff_section(out: Path) -> str:
         "No Python lint findings.")
 
 
+def cargo_clippy_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Rust quality (cargo clippy)", "cargo-clippy.json",
+        cargo_clippy_findings(out),
+        lambda f: pick(f, "code", default="cargo-clippy"),
+        "No Rust lint findings.")
+
+
 def checkov_section(out: Path) -> str:
     return count_findings_section(
         out, "IaC security (Checkov)", "checkov.json", checkov_findings(out),
@@ -316,6 +325,13 @@ def osv_section(out: Path) -> str:
         out, "Dependency vulnerabilities (OSV-Scanner)", "osv-scanner.json",
         osv_findings(out), lambda f: pick(f, "id", default="osv"),
         "No vulnerable dependencies found.")
+
+
+def cargo_audit_section(out: Path) -> str:
+    return count_findings_section(
+        out, "Rust dependency vulnerabilities (cargo audit)", "cargo-audit.json",
+        cargo_audit_findings(out), lambda f: pick(f, "id", default="cargo-audit"),
+        "No vulnerable Rust dependencies found.")
 
 
 def syft_section(out: Path) -> str:
@@ -497,6 +513,13 @@ def write_findings_csv(out: Path) -> int:
                      pick(f, "filename", "file"), line,
                      pick(f, "message", "Message")))
 
+    # cargo clippy
+    for f in cargo_clippy_findings(out):
+        rows.append(("quality", "cargo-clippy", pick(f, "level"),
+                     pick(f, "code", default="cargo-clippy"),
+                     pick(f, "file"), pick(f, "line"),
+                     pick(f, "message")))
+
     # checkov
     for f in checkov_findings(out):
         rng = pick(f, "file_line_range", "fileLineRange", default=[])
@@ -524,6 +547,14 @@ def write_findings_csv(out: Path) -> int:
         rows.append(("security", "osv-scanner", pick(f, "severity"),
                      pick(f, "id", default="osv"), pick(f, "source"), "",
                      f"{package}@{version} ({ecosystem}) {pick(f, 'message')}"))
+
+    # cargo audit
+    for f in cargo_audit_findings(out):
+        package = pick(f, "package")
+        version = pick(f, "version")
+        rows.append(("security", "cargo-audit", pick(f, "severity"),
+                     pick(f, "id", default="cargo-audit"), pick(f, "source"), "",
+                     f"{package}@{version} {pick(f, 'message')}"))
 
     # brakeman
     for f in brakeman_findings(out):
@@ -682,8 +713,8 @@ def main():
         scc_section, lizard_section, detekt_section, pmd_section, cpd_section,
         scapegoat_section, scalafix_section, rubycritic_section,
         shellcheck_section, actionlint_section, hadolint_section, ruff_section,
-        checkov_section, betterleaks_section, osv_section, syft_section,
-        brakeman_section, spotbugs_section,
+        cargo_clippy_section, checkov_section, betterleaks_section, osv_section,
+        cargo_audit_section, syft_section, brakeman_section, spotbugs_section,
         ast_grep_section, semgrep_section, depcruise_section, madge_section,
     ):
         try:
@@ -722,9 +753,11 @@ def main():
         "actionlint.json": "GitHub Actions workflow findings",
         "hadolint.json": "Dockerfile findings",
         "ruff.json": "Python lint findings",
+        "cargo-clippy.json": "Rust lint findings",
         "checkov.json": "IaC security findings",
         "betterleaks.json": "secret scanning findings",
         "osv-scanner.json": "dependency vulnerability findings",
+        "cargo-audit.json": "Rust dependency vulnerability findings",
         "syft.json": "SBOM package inventory",
         "brakeman.json": "Rails security findings",
         "spotbugs.xml": "JVM bytecode bug/security findings",

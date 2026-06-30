@@ -12,7 +12,12 @@ OS="$(uname -s)"
 PY="${PYTHON:-python3}"   # the interpreter analyse.sh / report_pdf.py will use
 
 # --- package-manager helpers -------------------------------------------------
-brew_install() { have brew && brew list "$1" >/dev/null 2>&1 || brew install "$1"; }
+brew_install() {
+  if have brew && brew list "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  brew install "$1"
+}
 # Install into the SAME interpreter the scripts run with; retry with
 # --break-system-packages for PEP 668 "externally-managed" environments.
 pip_install() {
@@ -84,6 +89,18 @@ else
   warn "Install SpotBugs: https://spotbugs.github.io/"
 fi
 
+say "Rust: clippy, cargo-audit"
+if have rustup; then
+  rustup component add clippy >/dev/null 2>&1 || warn "rustup component add clippy failed"
+elif ! have cargo; then
+  warn "cargo/rustup not found; skipping Rust tools"
+else
+  warn "rustup not found; install clippy with your Rust toolchain manager"
+fi
+if have cargo; then
+  have cargo-audit || cargo install cargo-audit --locked >/dev/null 2>&1 || warn "cargo install cargo-audit failed"
+fi
+
 say "TS/JS: dependency-cruiser, madge"
 if have npm; then
   npm install -g dependency-cruiser madge >/dev/null 2>&1 || warn "npm global install failed"
@@ -101,7 +118,7 @@ fi
 
 say "Done. Run: bin/analyse.sh /path/to/repo"
 printf '\nInstalled:\n'
-for t in scc lizard ast-grep semgrep osv-scanner syft shellcheck actionlint hadolint ruff checkov betterleaks detekt pmd spotbugs depcruise madge rubycritic packwerk brakeman; do
+for t in scc lizard ast-grep semgrep osv-scanner syft shellcheck actionlint hadolint ruff checkov betterleaks detekt pmd spotbugs cargo-audit depcruise madge rubycritic packwerk brakeman; do
   if have "$t"; then printf '  \033[1;32m✓\033[0m %s\n' "$t"; else printf '  \033[1;31m✗\033[0m %s\n' "$t"; fi
 done
 for m in matplotlib reportlab; do

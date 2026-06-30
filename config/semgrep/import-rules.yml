@@ -35,6 +35,15 @@ rules:
     patterns:
       - pattern-regex: "import\\s+.*(infra|infrastructure).*;"
 
+  - id: domain-must-not-use-infra-rust
+    languages: [rust]
+    severity: ERROR
+    message: "Domain layer must not use infrastructure."
+    paths:
+      include: ["**/domain/**"]
+    patterns:
+      - pattern-regex: "^\\s*use\\s+.*(infra|infrastructure)"
+
   # --- balanced quality checks ----------------------------------------------
   - id: no-direct-sql-in-controllers
     languages: [ruby]

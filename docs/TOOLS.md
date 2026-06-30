@@ -15,6 +15,11 @@ cycles).
 These cover the long tail of languages with zero per-language setup. Prefer
 these first; add per-language tools only where they buy real depth.
 
+The default scaffold favours no-build sensors. Build-integrated sensors are
+opt-in individually or via `--deep`, because they may compile the target,
+download dependencies, and run build scripts or compiler plugins. Today `--deep`
+enables the Scala sbt sensors and Rust `cargo clippy`.
+
 | Tool | Sensor type | What it gives | Why chosen |
 |---|---|---|---|
 | **scc** | Metrics | LOC, comment ratio, an estimated complexity score, COCOMO cost, and DRYness/uniqueness — across ~250 languages, very fast, native JSON. | Best single "how big / how complex overall" sensor; trivial to run in CI. |
@@ -84,6 +89,17 @@ cases cheaply; the JVM tools catch the structural ones precisely.
   bugbear checks, and McCabe complexity. The scaffold keeps it focused on
   correctness/maintainability and ignores formatting churn.
 
+### Rust
+- **cargo clippy** — Rust's standard lint layer on top of the compiler. It
+  catches correctness, maintainability, and idiom issues, but it compiles the
+  project, so the scaffold runs it only with `--cargo` or `--deep`.
+- **cargo audit** — RustSec vulnerability checks for `Cargo.lock`. The scaffold
+  runs it automatically when lockfiles are present and `cargo-audit` is
+  installed. It may update the RustSec advisory database under `~/.cargo`.
+- Complexity and size are still covered by **scc** and **lizard** without a
+  build; Rust layering rules are covered by the shipped ast-grep/semgrep import
+  rules.
+
 ### Ruby
 - **flog** — ABC complexity per method (Ruby's de-facto complexity score).
 - **reek** — code smells (incl. coupling-related: feature envy, data clumps).
@@ -115,12 +131,12 @@ For any language not above, pick a tool from these and add a wrapper in
 
 ## 4. Mapping to the two sensor types
 
-| Sensor type | Polyglot | JVM | Ruby | TS/JS |
-|---|---|---|---|---|
-| Complexity / size metric | scc, lizard | detekt, PMD, scalafix | flog, rubycritic | eslint `complexity`, scc |
-| Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | reek | dependency-cruiser metrics |
-| Dependency *rule* (forbidden edge / layering / no-cycle) | ast-grep, semgrep | ArchUnit, Konsist | packwerk | dependency-cruiser, madge |
-| Config / security hygiene | ShellCheck, actionlint, hadolint, checkov, betterleaks, OSV-Scanner, Syft | SpotBugs / FindSecBugs | brakeman | eslint security plugins (optional future) |
+| Sensor type | Polyglot | JVM | Rust | Ruby | TS/JS |
+|---|---|---|---|---|---|
+| Complexity / size metric | scc, lizard | detekt, PMD, scalafix | scc, lizard | flog, rubycritic | eslint `complexity`, scc |
+| Coupling / instability | (via ast-grep import counts) | jdepend, ArchUnit metrics | (via ast-grep import counts) | reek | dependency-cruiser metrics |
+| Dependency *rule* (forbidden edge / layering / no-cycle) | ast-grep, semgrep | ArchUnit, Konsist | ast-grep, semgrep | packwerk | dependency-cruiser, madge |
+| Config / security hygiene | ShellCheck, actionlint, hadolint, checkov, betterleaks, OSV-Scanner, Syft | SpotBugs / FindSecBugs | cargo clippy, cargo audit | brakeman | eslint security plugins (optional future) |
 
 Treat each row/column cell as an independent sensor a coding agent can poll;
 the scaffold's `summary.md` is the aggregated read-out.

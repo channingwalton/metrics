@@ -92,6 +92,10 @@ def ruff_findings(out):
     return _as_list(load_json(Path(out) / "ruff.json"), "results")
 
 
+def cargo_clippy_findings(out):
+    return _as_list(load_json(Path(out) / "cargo-clippy.json"), "results")
+
+
 def checkov_findings(out):
     """Return failed Checkov checks from either single-run or multi-run JSON."""
     data = load_json(Path(out) / "checkov.json")
@@ -173,6 +177,38 @@ def osv_findings(out):
     return findings
 
 
+def cargo_audit_findings(out):
+    data = load_json(Path(out) / "cargo-audit.json")
+    runs = data.get("runs", []) if isinstance(data, dict) else []
+    findings = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        source = _pick(run, "source")
+        report = _pick(run, "report", default={})
+        if not isinstance(report, dict):
+            continue
+        vulnerabilities = _pick(report, "vulnerabilities", default={})
+        for item in _as_list(vulnerabilities, "list"):
+            if not isinstance(item, dict):
+                continue
+            advisory = _pick(item, "advisory", default={})
+            package = _pick(item, "package", default={})
+            aliases = _pick(advisory, "aliases", default=[])
+            rid = _pick(advisory, "id")
+            if not rid and isinstance(aliases, list) and aliases:
+                rid = aliases[0]
+            findings.append({
+                "id": rid or "cargo-audit",
+                "package": _pick(package, "name", default="?"),
+                "version": _pick(package, "version"),
+                "source": source,
+                "severity": _pick(advisory, "severity"),
+                "message": _pick(advisory, "title", "description"),
+            })
+    return findings
+
+
 def brakeman_findings(out):
     return _as_list(load_json(Path(out) / "brakeman.json"), "warnings")
 
@@ -246,6 +282,10 @@ def triggered_check_rules(out):
         rid = _pick(f, "code", "Code", default="ruff")
         rules.setdefault(rid, ("Ruff", _pick(f, "message", "Message")))
 
+    for f in cargo_clippy_findings(out):
+        rid = _pick(f, "code", default="cargo-clippy")
+        rules.setdefault(rid, ("cargo clippy", _pick(f, "message")))
+
     for f in checkov_findings(out):
         rid = _pick(f, "check_id", "checkId", default="checkov")
         rules.setdefault(rid, ("Checkov", _pick(f, "check_name", "checkName", "message")))
@@ -262,6 +302,15 @@ def triggered_check_rules(out):
         message = _pick(f, "message")
         desc = f"{package_desc} - {message}" if message else package_desc
         rules.setdefault(rid, ("OSV-Scanner", desc))
+
+    for f in cargo_audit_findings(out):
+        rid = _pick(f, "id", default="cargo-audit")
+        package = _pick(f, "package")
+        version = _pick(f, "version")
+        package_desc = f"{package}@{version}" if version else package
+        message = _pick(f, "message")
+        desc = f"{package_desc} - {message}" if message else package_desc
+        rules.setdefault(rid, ("cargo audit", desc))
 
     for f in brakeman_findings(out):
         rid = str(_pick(f, "warning_code", "check_name", default="brakeman"))
